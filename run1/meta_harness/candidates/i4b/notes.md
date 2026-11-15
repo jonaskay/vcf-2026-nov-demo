@@ -1,0 +1,5 @@
+# i4b
+Parent: i3a
+Change: Test-first procedure: after the checklist and a short exploration, write acceptance tests from the issue wording using only public APIs and fixtures, run them red, then implement to green; second pass for breadth (UI surfaces via one shared partial/helper, filter), with a step budget (core green by ~step 35, submit by ~70). Skill/memory otherwise as i3a.
+Hypothesis: In the stalled-card run the agent implemented first and wrote tests that matched its own interpretation (including micro-boundary tests, then reworking the SQL ~15 steps, then ~25 steps on notification/mailer/search surfaces). Writing literal acceptance tests first pins the semantics to the issue text and keeps the agent from over-building; the breadth pass is bounded.
+Evidence: i3a/runs/ft-card-stalled-quiet-clock__1 steps.tsv: tests written at steps 28-35 after implementation (21-23), microsecond boundary rework steps 46-63, surface sprawl steps 40-45, 75-97; reward 0 in 100 steps. i3a entropy-sweep passed with a small focused change.

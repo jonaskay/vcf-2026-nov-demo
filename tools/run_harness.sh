@@ -26,6 +26,12 @@ harness=$(cd "$harness" && pwd)
 mkdir -p "$out"; out=$(cd "$out" && pwd)
 raw="$demo/private/raw-runs/$label"
 
+# Run 1's raw results are frozen (rerun plan, Phase 0): never reuse one of its labels,
+# because the rm -rf below would destroy that run's scored output.
+if grep -qxF "$label" "$demo/private/raw-runs/.run1-labels" 2>/dev/null; then
+  echo "run_harness: REFUSING label '$label': it belongs to run 1 (private/raw-runs/.run1-labels)" >&2; exit 2
+fi
+
 "$demo/tools/validate.sh" "$harness" || { echo "run_harness: $label rejected by validate.sh" >&2; exit 2; }
 
 run_task() { # <task>

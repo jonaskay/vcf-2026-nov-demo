@@ -8,16 +8,19 @@ Limits per run: 90 minutes of wall-clock time, model thinking included; 400 step
 
 # WHAT YOU HAVE
 
-__NREF__ rollouts under the unmodified harness, and 2 candidate harnesses -- 1 on the INV dimension (how the agent works) and 1 on the DOM dimension (what a practitioner knows). Each candidate was rolled out ONCE and you have that rollout, unless its folder says why it was not.
+__NREF__ rollouts under the unmodified harness, and 2 candidate harnesses -- 1 on the INV dimension (how the agent works) and 1 on the DOM dimension (what a practitioner knows). Each candidate changes ONE component and was rolled out __K__ times on this same task, in the same sandbox and with the same model as the base rollouts; you have those rollouts, unless its folder says why there are none.
 
 The candidates were sampled separately but share the same task, evidence and likely model biases. Agreement is support, not independent proof; contradiction is a reason to inspect the trajectories, not to vote.
 
 # HOW TO WEIGH THE EVIDENCE
 
-The __NREF__ base rollouts are draws from ONE distribution -- read them as a set, not as __NREF__ separate stories.
+Start with `context/evidence.md`: one row per rollout in this workspace, base and candidates, built by a script. It has no score. Then open the trajectories behind every difference you act on -- at least two, from different arms.
+
+The __NREF__ base rollouts are draws from ONE distribution -- read them as a set, not as __NREF__ separate stories. So are each candidate's __K__ rollouts.
 
 - A failure that repeats across the base set is a real property of the base harness and the strongest thing you can act on. A defect in 1/__NREF__ is noise, and an edit aimed at it is overfitting to one sample.
-- Each candidate has ONE rollout, so a single good or bad outcome is weak evidence either way. An edit earns its place when a SPECIFIC MOMENT in a trajectory shows the mechanism -- 'this looks like good practice' is not evidence; name the moment.
+- Compare SETS, not single runs: a candidate's __K__ rollouts against the __NREF__ base rollouts. A difference that shows in 1 of __K__ is noise; one that holds across the set, and that you can tie to the edited component, is evidence.
+- An edit earns its place when a SPECIFIC MOMENT in a trajectory shows the mechanism -- the agent read the skill and then did what it says, or a rule changed what it did at a step where the base runs went wrong. 'This looks like good practice' is not evidence; name the moment. An edit whose skill was never read changed nothing, whatever it says on paper.
 - Judge the downside as heavily as the upside. The costliest failure on this work is a run that leaves nothing usable: an empty patch, or a half-finished change when the time limit hits. An edit that helps one rollout and risks that elsewhere is a bad edit.
 - IF ANY ROLLOUT ASSOCIATED WITH AN EDIT PRODUCED NOTHING (an empty `agent.patch`) OR RAN INTO THE TIME LIMIT (`outcome: agent_timeout`), say so explicitly in your notes and treat that edit as UNSAFE unless the rest of the evidence is overwhelming. Never merge an edit from such a rollout without stating why.
 - A candidate that was not rolled out has no execution evidence of its own; its edits can rest only on the base rollouts.
@@ -100,10 +103,10 @@ A decision without evidence attached is a decision the next reader cannot audit.
 - `context/task.md` -- the request, exactly as the agent receives it.
 - `context/base_harness/` -- the unmodified harness (read only).
 - `context/harness/` -- where you write the successor; it starts as a copy of `base_harness/`.
+- `context/evidence.md` -- a script-built table of every rollout here (base, inv, dom): outcome, steps, minutes, files in the patch, test commands and their last exit code, full suite or not, the step of the first repository write, and which harness files the agent `cat`-ed. No score. Read it first.
 - `context/references/r<n>/` -- the __NREF__ base rollouts: `result.json` (outcome, steps, cost, duration; there is no score), `steps.tsv` (one line per step; read it first), `trajectory.json` (every step's reasoning, commands and output), `agent.patch` (the change left in `/app`).
 - `context/candidates/inv/` and `context/candidates/dom/`, each with:
   - `harness/`: the candidate harness.
   - `harness.diff`: its diff against the unmodified harness.
   - `notes.md`: the proposer's notes, tying each edit to a trajectory moment.
-  - `rollout/`: its single rollout, in the same four files as a reference -- or `NO_ROLLOUT.txt` saying why there is none.
-- `context/library/` -- the library of earlier tasks; start with `index.md`.
+  - `rollouts/r<n>/`: its __K__ rollouts, each in the same four files as a reference -- or `NO_ROLLOUT.txt` saying why there are none.

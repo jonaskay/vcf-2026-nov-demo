@@ -1,0 +1,17 @@
+I made one change, to `system.md`: three short always-on process bullets under step 5 of the workflow. I added no skills.
+
+**What the runs showed**
+- All four reference runs completed in 27–31 steps and about 9–18 minutes. Time was not the problem.
+- The runs disagreed on approach:
+  - r1 added an index plus a cheap prefilter.
+  - r3 and r4 restructured the sweep into per-board batches.
+- Only r1 and r3 measured their result with an EXPLAIN QUERY PLAN. r1's plan script was part of its edit–verify loop.
+- In r1, `db:migrate` rewrote unrelated schema files (`db/cable_schema.rb`, version lines). It spotted this via `git status` and reverted them, which took several steps (steps 21–26).
+- r1 also created a temporary index (`temp_cards_status_active`) while experimenting.
+
+**What the bullets say**
+1. State the behavior to preserve and the improvement wanted before editing. For performance work, measure that improvement before and after, on large enough data, with throwaway scripts in /tmp.
+2. After any command that regenerates files, check `git status` and revert unrelated churn. Remove experimental indexes or tables.
+3. Run the focused test file, then the wider suite, and review the final diff. This keeps what r1 already did well.
+
+I did not add Rails or Fizzy facts. The submit instruction is unchanged.

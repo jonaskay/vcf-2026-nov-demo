@@ -1,0 +1,13 @@
+Only in demo/harness2/work/ft-entropy-sweep/compose/context/harness/skills: rails-query-perf-change
+diff -ru demo/harnesses/h0/system.md demo/harness2/work/ft-entropy-sweep/compose/context/harness/system.md
+--- demo/harnesses/h0/system.md	2026-11-14 12:40:58
++++ demo/harness2/work/ft-entropy-sweep/compose/context/harness/system.md	2026-11-14 19:19:25
+@@ -4,6 +4,8 @@
+ 
+ This workflow should be done step-by-step so that you can iterate on your changes and any possible problems.
+ 
++When the task is a query/performance change (slow scope, sweep, job, missing index, schema change), run `cat /opt/harness/skills/rails-query-perf-change/SKILL.md` and follow it.
++
+ 1. Analyze the codebase by finding and reading relevant files
+ 2. Create a script to reproduce the issue
+ 3. Edit the source code to resolve the issue

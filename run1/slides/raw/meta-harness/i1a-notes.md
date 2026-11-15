@@ -1,0 +1,5 @@
+# i1a
+Parent: h0
+Change: Rewrote the four always-on files, with no skills. system.md now says to search for existing similar code, write a numbered requirements list, test boundaries, and review the diff against the list. memory.md adds Fizzy and Rails facts (concerns layout, filters, the two schema files, cache keys, batching and indexes, time helpers in tests). Guardrails and tool guidance say there is no `rg` and no Python, and give test commands.
+Hypothesis: h0 had no codebase knowledge. The agent re-derived the app each run and reached for unavailable tools. Putting conventions and reuse-first guidance in the prompt should give the agent a better design and make it check every requirement.
+Evidence: h0/runs/ft-entropy-sweep__p1 steps 4 and 14 (`rg` and `python3` failed). h0/runs/ft-card-stalled-quiet-clock__p1 steps 22-47 (it added its own `last_burst_at` column and stored state, although the repo already has activity-spike and stallable concepts), then steps 52-57 (it hunted for the places cards are shown late). Both tasks scored 0 across all runs.

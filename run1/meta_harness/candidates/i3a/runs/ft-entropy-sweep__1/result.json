@@ -1,0 +1,9 @@
+{
+  "task": "ft-entropy-sweep",
+  "outcome": "completed",
+  "steps": 93,
+  "cost_usd": 0.24484683000000002,
+  "duration_s": 2846.3,
+  "reward": 1.0,
+  "credit": 1.0
+}

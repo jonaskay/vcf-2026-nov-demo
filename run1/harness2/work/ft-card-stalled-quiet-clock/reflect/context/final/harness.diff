@@ -1,0 +1,36 @@
+diff -ruN -x .keep base_harness/skills/card-derived-state/SKILL.md harness/skills/card-derived-state/SKILL.md
+--- base_harness/skills/card-derived-state/SKILL.md	1970-01-01 02:00:00
++++ harness/skills/card-derived-state/SKILL.md	2026-11-14 18:20:03
+@@ -0,0 +1,21 @@
++---
++name: card-derived-state
++description: Checklist for adding a stored/derived state, badge and index filter to Fizzy cards.
++---
++Operation: extend Card with a concern (derive state from events/comments/time), query it via a scope + matching predicate, render it everywhere cards appear. Use the request's exact names, thresholds and index value; do not rename them.
++
++Workspace facts (verify with grep before relying):
++- Card behavior lives in concerns `app/models/card/*.rb`; add one and register it in the `include` list in `app/models/card.rb`.
++- `Card.indexed_by` scope (card.rb, `case index`) AND `Filter::Fields::INDEXES` (app/models/filter/fields.rb) must both gain a new index value; that file also has index display labels.
++- Hooks: `Card::Eventable#event_was_created` (assigned/reopened events, calls `touch_last_active_at`) and `Comment::Eventable#event_was_created`/`track_creation` (comment created). Hook there rather than adding callbacks elsewhere. Exclude system-user comments (`users(:system)` in fixtures) when counting people/comments; `comments.by_user` exists.
++- Board auto-close period is `auto_postpone_period` (seconds) on the board.
++- Schema: keep BOTH `db/schema.rb` and `db/schema_sqlite.rb` in sync with a new migration (same version, column added in both). Run `bin/rails db:test:prepare` after.
++- Export/import: `Account::DataTransfer::RecordSet` requires every `Card.column_names` key in archives, so a new cards column makes older archives fail `check`. Handle it (optional attributes in Manifest/RecordSet + a test).
++- Card display surfaces: `cards/display/_preview`, `_public_preview`, `public/cards/show`, `cards/_container`, `cards_helper#card_article_tag`, JSON `cards/_card.json.jbuilder` (add a boolean key), `notifications/_notification.json.jbuilder`, `my/menus/_shortcuts`. Find others with `grep -rn golden app/views app/helpers`: golden is the closest analogue.
++- Fragment caches (`cached: true`, `cache card`, `json.cache!`) key on updated_at, so a purely time-based state serves stale HTML/JSON. Include the state in the cache key (`[card, card.stalled?]`) or override `cache_version`; apply to every cached surface, including turbo_stream previews.
++
++Consistency checks before finishing:
++1. Scope and predicate agree at the boundary (>= vs >) and on nil columns; test both at exactly the threshold.
++2. Any activity resets the state: confirm which writes bump `last_active_at` and that the state derives from it.
++3. Unassign/close/system comments must not trigger event-like triggers unless requested.
++4. Tests: model test `test/models/card/<concern>_test.rb` (`travel_to`, `Current.session = sessions(:david)`), controller test in `test/controllers/cards_controller_test.rb` for index HTML + JSON + card page.
+diff -ruN -x .keep base_harness/system.md harness/system.md
+--- base_harness/system.md	2026-11-14 18:20:03
++++ harness/system.md	2026-11-14 18:20:03
+@@ -9,5 +9,7 @@
+ 3. Edit the source code to resolve the issue
+ 4. Verify your fix works by running your script again
+ 5. Test edge cases to ensure your fix is robust
++When the request adds a derived card state, a new column on cards, a new `indexed_by` value, or a badge shown on cards, run `cat /opt/harness/skills/card-derived-state/SKILL.md` and follow it.
++
+ 6. Submit your changes and finish your work by issuing the following command: `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`.
+    Do not combine it with any other command. <important>After this command, you cannot continue working on this task.</important>

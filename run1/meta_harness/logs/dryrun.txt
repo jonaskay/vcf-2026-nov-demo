@@ -1,0 +1,20 @@
+=== iteration 1 (i1a, i1b) 14:53:49
+iteration 1 proposer
+{"subtype":"success","cost_usd":0.24890469999999998,"turns":35}
+tool calls:
+  13 Edit
+  21 Read
+distinct files read: 21
+audit: clean
+OK /Users/jk/dev/vcf-nov-2026-talk/demo/meta_harness/candidates/i1a/harness
+OK /Users/jk/dev/vcf-nov-2026-talk/demo/meta_harness/candidates/i1b/harness
+=== iteration 1 done 14:55:16
+# Scoreboard
+
+Updated 2026-11-14 14:55. Sorted by mean reward, then mean credit, then cost per pass over the search set, then steps.
+
+| rank | candidate | status | mean reward | mean credit | cost/pass | mean steps | per task |
+|---|---|---|---|---|---|---|---|
+| 1 | h0 | ok | 0 | 0 | $0.33 | 59 | card-stalled-quiet-clock: r=0 c=0 n=4 agent_timeout×1 completed×3<br>entropy-sweep: r=0 c=0 n=3 completed×3 |
+| 2 | i1a | no runs | – | – | – | – |  |
+| 3 | i1b | no runs | – | – | – | – |  |

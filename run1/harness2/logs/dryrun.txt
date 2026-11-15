@@ -1,0 +1,13 @@
+task.sh [ft-card-stalled-quiet-clock] 15:44:31 start (dry=1)
+task.sh [ft-card-stalled-quiet-clock] 15:44:31 refs: 3 base rollout(s)
+task.sh [ft-card-stalled-quiet-clock] 15:44:31 inv: session start (budget $3)
+task.sh [ft-card-stalled-quiet-clock] 15:44:31 dom: session start (budget $3)
+task.sh [ft-card-stalled-quiet-clock] 15:44:55 inv: {"cost":0.07838089999999999,"turns":10}
+task.sh [ft-card-stalled-quiet-clock] 15:44:55 inv: OK /Users/jk/dev/vcf-nov-2026-talk/demo/harness2/work/ft-card-stalled-quiet-clock/inv/context/harness
+task.sh [ft-card-stalled-quiet-clock] 15:45:03 dom: {"cost":0.1242158,"turns":10}
+task.sh [ft-card-stalled-quiet-clock] 15:45:03 dom: OK /Users/jk/dev/vcf-nov-2026-talk/demo/harness2/work/ft-card-stalled-quiet-clock/dom/context/harness
+task.sh [ft-card-stalled-quiet-clock] 15:45:03 compose_dry: session start (budget $4)
+task.sh [ft-card-stalled-quiet-clock] 15:45:38 compose_dry: {"cost":0.07603370000000001,"turns":13}
+task.sh [ft-card-stalled-quiet-clock] 15:45:38 compose_dry: OK /Users/jk/dev/vcf-nov-2026-talk/demo/harness2/work/ft-card-stalled-quiet-clock/compose_dry/context/harness
+task.sh [ft-card-stalled-quiet-clock] 15:45:38 improver cost so far: $0.28
+task.sh [ft-card-stalled-quiet-clock] 15:45:38 dry run done: see /Users/jk/dev/vcf-nov-2026-talk/demo/harness2/work/ft-card-stalled-quiet-clock/{inv,dom,compose_dry}/

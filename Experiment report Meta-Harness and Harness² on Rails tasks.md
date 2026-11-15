@@ -104,7 +104,7 @@ Solid arrows run from parent to child; the dashed arrow marks the query skill i3
 
 **The lineage to the pass.** i1b introduced on-demand skills. i2a rewrote the query skill after reading i1b's patch and its `EXPLAIN` output; entropy still failed. i2b reworked the procedure. i3a combined i2b's procedure with i2a's skill, revised after reading i2a's failed patch, and passed. Both children of i3a passed too. This is the proposer composing two parents from their traces, close in spirit to Harness²'s composer.
 
-**The proposer diagnosed from traces.** Iteration 1: 35 turns, 21 files read, $0.25. Iteration 2: 46 turns, 27 files, $0.45. (The paper reports a median of 82 files read.) Examples from its `notes.md`:
+**The proposer diagnosed from traces.** Iteration 1: 35 turns, 21 files read, $0.25. Iteration 2: 46 turns, 27 files, $0.45. Iteration 3: 42 turns, 25 files, $0.34. Iteration 4: 36 turns, 19 files, $0.34. (The paper reports a median of 82 files read.) Examples from its `notes.md`:
 
 - i1a: `rg` and `python3` failed at steps 4 and 14 of an entropy run (neither exists in the sandbox); the card run invented its own column instead of reusing existing concepts.
 - i2a: in i1b's entropy run, `EXPLAIN` at steps 8–22 showed a full scan; the agent chose a 3-day prefilter plus an index and never measured how many rows it removed.
@@ -118,7 +118,7 @@ Solid arrows run from parent to child; the dashed arrow marks the query skill i3
 
 | Run | Task | Outcome | Steps | Time | Reward |
 | --- | --- | --- | --- | --- | --- |
-| i3a, search run | entropy | completed | – | – | 1 |
+| i3a, search run | entropy | completed | 93 | 47 min | 1 |
 | i3a, repeat | entropy | completed | 69 | 38 min | 0 |
 | H0, local | mysql (held-out) | completed | 66 | 23 min | 0 |
 | i3a | mysql (held-out) | completed | 27 | 16 min | 0 |
@@ -165,7 +165,7 @@ Kept from the paper: every task starts from H0 and uses the library only through
 | --- | --- | --- | --- | --- |
 | Card | 90 steps, 54 min | 111 steps, 61 min | DOM skill `card-derived-state`; dropped INV | **timeout**, 118 steps, 91 min |
 | Entropy | 102 steps, 58 min | 47 steps, 20 min | DOM skill `rails-query-perf-change`; dropped INVa | completed, 32 steps, 9 min |
-| Mysql | 45 steps, 15 min | 60 steps, 22 min | (not yet read) | completed, 43 steps, 24 min |
+| Mysql | 45 steps, 15 min | 60 steps, 22 min | Both: INV's `tool_guidance.md` (no-python note, test/rubocop/`git status` hygiene), shortened; DOM skill `card-query-page`, trimmed | completed, 43 steps, 24 min |
 
 All 9 runs: reward 0, credit 0.
 
@@ -176,9 +176,13 @@ All 9 runs: reward 0, credit 0.
 | Editors (dry run, card task) | 10 each | about 1 min | $0.08–0.12 | $3 |
 | Composer, card | 13 | 28 s | $0.07 | $4 |
 | Composer, entropy | 12 | 25 s | $0.07 | $4 |
+| Composer, mysql | 15 | 29 s | $0.07 | $4 |
 | Reflector, card and entropy | 5 each | 11–12 s | $0.03 | $3 |
+| Reflector, mysql | 8 | 15 s | $0.04 | $3 |
 
-In the dry run, the INV editor opened no trajectory and the DOM editor read only the patches. Improver cost per task: $0.38 (card), $0.24 (entropy).
+In the dry run, the INV editor opened no trajectory and the DOM editor read only the patches. Improver cost per task: $0.38 (card, including the dry run), $0.24 (entropy), $0.28 (mysql).
+
+On mysql the composer again compared against the published runs ("base rollouts were short (26 and 27 steps seen)"); mysql's local H0 (66 steps) was not among its references. The reflector rated all three edits `confounded` and returned `NO_ENTRY`, as on the other two tasks. It did notice one real risk: the kept skill steers toward a `LIKE` search while the task asks for fulltext.
 
 **The composer compared against the wrong baseline, twice.** On the card task it judged the probes against the published runs ("base runs 53–67 steps") and wrote that the skill "may add time". The local H0 timeout was in its workspace as `r4`, unread. Its prompt said "3 base rollouts", because `r4` was added after the task started, which made this worse. On the entropy task the prompt said 4, and it still compared everything with `r1`, the fastest published run (9 min). Measured against local H0:
 
@@ -215,17 +219,17 @@ One task and few runs, so this illustrates the mechanism rather than proving it.
 
 Harness²'s task 3 harness was built for this task with its own probes, so it isn't held-out in the same sense; it shares the row because both methods ended up running this task.
 
-**Effort and cost.** Costs are approximate; the exact total is an open item.
+**Effort and cost.** Exact costs, summed from every local trial's `result.json` (`agent.result.json` for failed trials) and every session's `*.stats.txt`.
 
 |  | Meta-Harness | Harness² |
 | --- | --- | --- |
 | Luna runs | 16 search + 1 repeat + 2 held-out | 9 (references were free: published runs, plus local H0 runs made for the baseline) |
-| Luna cost | about $9 for the 16 search runs | about $2 |
-| Improver sessions | 4 proposers ($0.25 and $0.45 for the first two) | 12 sessions + 3 in the dry run, about $1 in total |
+| Luna cost | $4.64 for the 16 search runs (+$1.16 for 4 accidental duplicate runs, see addendum), $0.27 for repeat and held-out | $1.99 (10 trials, including one failed trial) |
+| Improver sessions | 4 proposers, $1.37 in total ($0.25, $0.45, $0.34, $0.34) | 12 sessions + 3 in the dry run, $0.91 in total |
 | Wall clock | 14:57–20:43, 4 iterations | 15:48 to the evening, 3 tasks (card 2.5 h, entropy 1.1 h) |
 | Output | One harness for unseen tasks | A harness per task; an empty library |
 
-The whole evening, including baselines, repeats and the dry run, came to roughly $15–20.
+The whole evening came to **$11.64**: Luna $9.37 (including local H0 baselines $0.42 and sanity/scratch runs $0.88) and improver sessions $2.28. Not included: the Claude Code sessions that built and drove the experiment.
 
 **When you'd use which**, as a talking point: Meta-Harness when you have a scored task set and can afford offline search, with a held-out set to catch overfitting; Harness² when tasks arrive one at a time with no grader, and you can afford several rollouts per task so its library can grow.
 
@@ -262,8 +266,10 @@ Both searches ran side by side from mid-afternoon; the last run finished at 21:1
 | Time | Event |
 | --- | --- |
 | 21:17 | Held-out run of Meta-Harness winner i4b: 0 |
-| 20:43 | Meta-Harness iteration 4 done: i4a and i4b also pass entropy |
-| Evening | Harness² task 3 (mysql) done: 0; i3a repeat on entropy: 0; i3a held-out: 0 |
+| 20:43 | Meta-Harness iteration 4 done: i4a and i4b also pass entropy (in the exported runs; see addendum) |
+| 20:23 | Harness² task 3 (mysql) done: 0, `NO_ENTRY` |
+| 19:51 | i3a repeat on entropy done: 0 |
+| 19:29 | i3a held-out run on mysql done: 0 |
 | 19:28 | Harness² task 2 (entropy) done: 0, `NO_ENTRY` |
 | 19:07 | Meta-Harness iteration 3 done: **i3a passes entropy**, the first pass of the evening |
 | 18:20 | Harness² task 1 (card) done: composed run timed out, `NO_ENTRY` |
@@ -295,7 +301,7 @@ All paths are relative to the repo root `vcf-nov-2026-talk/`; most slide materia
 | Published H0 runs | `ai-evals/runs/2026-10-06-feature-tasks-revamped/gpt-6-luna-max/` |
 | Harness² dry-run notes and diffs | `demo/slides/raw/harness2-dryrun/` |
 | Harness² task 1 and 2: editor and composer notes, reflector edit table, adopted diff, `task.log` | `demo/slides/raw/harness2-task1/`, `harness2-task2/` |
-| Harness² task 3 | `demo/harness2/work/ft-mysql-fulltext-search-foundation/` (copy to `slides/raw/harness2-task3/` if not done) |
+| Harness² task 3: editor and composer notes, reflector edit table, adopted diff, `task.log` | `demo/slides/raw/harness2-task3/` |
 | Harness² scores for all 18 rows (references, probes, composed runs) | run `demo/harness2/scores.sh` (prints to the terminal) |
 | Harness² prompts (INV vs DOM sections side by side) | `demo/harness2/prompts/` |
 | Library index (empty) | `demo/harness2/library/index.md` |
@@ -320,10 +326,34 @@ Optional live element: start the `at-toc-cache-per-role` smoke task (about 12 mi
 
 **Open items to check before building slides**
 
-- [ ] Harness² task 3: the composer's decision and the reflector's outcome (expected `NO_ENTRY`): `demo/harness2/work/ft-mysql-fulltext-search-foundation/compose/notes.md` and `logs/task.log`.
-- [ ] Meta-Harness proposer stats for iterations 3 and 4 (turns, files read, cost): `demo/meta_harness/logs/iter3.stats.txt`, `iter4.stats.txt`.
-- [ ] Exact total cost: sum `usage.cost_usd` over all `result.json` files (plus `agent.result.json` for the failed trial) and the cost lines in every `*.stats.txt`.
-- [ ] i3a's steps and time on its passing entropy run: `demo/meta_harness/candidates/i3a/runs/ft-entropy-sweep__1/result.json`.
-- [ ] Exact end times of Harness² task 3, the i3a repeat and the i3a held-out run.
-- [ ] Copy Harness² task 3's material into `demo/slides/raw/harness2-task3/`, if not done.
-- [ ] Check i4b's harness for task-specific terms too (it inherits i3a's skills): `grep -rniE "entropy|postpone|stall|quiet|burst" demo/meta_harness/candidates/i4b/harness`.
+- [x] Harness² task 3: the composer's decision and the reflector's outcome (expected `NO_ENTRY`): `demo/harness2/work/ft-mysql-fulltext-search-foundation/compose/notes.md` and `logs/task.log`.
+- [x] Meta-Harness proposer stats for iterations 3 and 4 (turns, files read, cost): `demo/meta_harness/logs/iter3.stats.txt`, `iter4.stats.txt`.
+- [x] Exact total cost: sum `usage.cost_usd` over all `result.json` files (plus `agent.result.json` for the failed trial) and the cost lines in every `*.stats.txt`.
+- [x] i3a's steps and time on its passing entropy run: `demo/meta_harness/candidates/i3a/runs/ft-entropy-sweep__1/result.json`.
+- [x] Exact end times of Harness² task 3, the i3a repeat and the i3a held-out run.
+- [x] Copy Harness² task 3's material into `demo/slides/raw/harness2-task3/`, if not done.
+- [x] Check i4b's harness for task-specific terms too (it inherits i3a's skills): `grep -rniE "entropy|postpone|stall|quiet|burst" demo/meta_harness/candidates/i4b/harness`.
+
+**Results of the open items (Nov 15)**
+
+- Task 3: the composer kept both candidates' edits (trimmed); the reflector rated all three `confounded`, `NO_ENTRY`. Material in `demo/slides/raw/harness2-task3/`.
+- Proposer stats: iteration 3, 42 turns, 25 files, $0.34; iteration 4, 36 turns, 19 files, $0.34 (copied to `demo/slides/raw/meta-harness/`).
+- i3a's passing entropy run: 93 steps, 47 min, $0.24.
+- End times (EET): i3a held-out 19:29:15, i3a repeat 19:50:50, Harness² task 3 20:23:20.
+- Exact total: $11.64 (table in "Side by side").
+- i4b grep: 6 hits, all inherited from i3a: `memory.md` names `Entropy` rows and "entropy periods"; the `derived-state-features` skill names entropy periods, "a burst then N days quiet" and closed/postponed cards. So the winner carries both search tasks' specifics, as i3a does.
+- Also added to `demo/slides/raw/meta-harness/`: `i4a-notes.md`, `i4b-notes.md`, `scoreboard-final.md`, `h0-to-winner.diff` (listed in the index above but missing).
+
+## Addendum (Nov 15): iteration 4 was evaluated twice
+
+Found while closing the open items. Iteration 4's evaluation was started twice, at 19:09 and 19:16, and both batches ran to completion into the same raw directory (`demo/private/raw-runs/mh-i4{a,b}/`). Each candidate therefore has two trials per search task, but only one per task was exported, so the scoreboard and the report show one (a mix of the two batches). The proposer saw only the exported trials. The four unreported trials:
+
+| Candidate | Task | Reported trial | Unreported trial |
+| --- | --- | --- | --- |
+| i4a | card | 163 steps, 0 | 110 steps, 0 |
+| i4a | entropy | 53 steps, **1** | 69 steps, **1** |
+| i4b | card | 92 steps, 0 | 121 steps, 0 |
+| i4b | entropy | 48 steps, **1** | 55 steps, **0** |
+
+Effect on the claims: on entropy the i3a lineage passed **4 of 6** runs, not 3 of 4; the winner i4b passed **1 of 2**, and i4a 2 of 2. Every other harness is unchanged at 0 of 9. By the selection rule over all trials, i4a (entropy 1.0) would outrank i4b (0.5). This strengthens the noise finding and does not change the story; the headline numbers above are left as reported in run 1, and slides should use this table. Cost of the duplicate batch: $1.16, included in the total.
+

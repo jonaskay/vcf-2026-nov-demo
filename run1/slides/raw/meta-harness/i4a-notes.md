@@ -1,0 +1,5 @@
+# i4a
+Parent: i3a
+Change: Adds an "ambiguity and population" step to system.md (for each clause list the readings, choose by mirroring the nearest existing sibling scope/predicate, state which records are in/out), a rule not to change semantics or signatures of shared methods, and a skill note to keep the core derived-state query small (few ANDed EXISTS) and to build only after the model is proven in tests.
+Hypothesis: The stalled-card run (0 reward) built a 110-line SQL scope, changed `touch_last_active_at`'s signature and Event/Comment/Reaction callbacks, and included closed/postponed cards without checking sibling scopes. Hidden tests probably encode the domain's usual population and existing APIs; mirroring siblings and not touching shared methods should align better.
+Evidence: i3a/runs/ft-card-stalled-quiet-clock__1 agent.patch (card/stalled.rb 112 lines, eventable.rb/comment/eventable.rb/reaction.rb signature changes, Filter include_closed_cards?/include_not_now_cards? widened), result reward 0 after 100 steps; i3a entropy-sweep passed with minimal public-API-preserving change.

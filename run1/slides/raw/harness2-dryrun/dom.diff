@@ -1,0 +1,12 @@
+Only in demo/harness2/work/ft-card-stalled-quiet-clock/dom/context/harness/skills: card-derived-state
+diff -ru demo/harnesses/h0/system.md demo/harness2/work/ft-card-stalled-quiet-clock/dom/context/harness/system.md
+--- demo/harnesses/h0/system.md	2026-11-14 12:40:58
++++ demo/harness2/work/ft-card-stalled-quiet-clock/dom/context/harness/system.md	2026-11-14 15:44:46
+@@ -9,5 +9,7 @@
+ 3. Edit the source code to resolve the issue
+ 4. Verify your fix works by running your script again
+ 5. Test edge cases to ensure your fix is robust
++When the request adds a derived card state, a new column on cards, a new `indexed_by` value, or a badge shown on cards, run `cat /opt/harness/skills/card-derived-state/SKILL.md` and follow it.
++
+ 6. Submit your changes and finish your work by issuing the following command: `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`.
+    Do not combine it with any other command. <important>After this command, you cannot continue working on this task.</important>

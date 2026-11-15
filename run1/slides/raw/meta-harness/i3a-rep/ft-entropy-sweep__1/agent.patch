@@ -1,0 +1,262 @@
+diff --git a/app/models/card/entropic.rb b/app/models/card/entropic.rb
+index ebaad78..7f792af 100644
+--- a/app/models/card/entropic.rb
++++ b/app/models/card/entropic.rb
+@@ -3,11 +3,14 @@ module Card::Entropic
+ 
+   included do
+     scope :due_to_be_postponed, -> do
+-      active
+-        .joins(board: :account)
+-        .left_outer_joins(board: :entropy)
+-        .joins("LEFT OUTER JOIN entropies AS account_entropies ON account_entropies.account_id = accounts.id AND account_entropies.container_type = 'Account' AND account_entropies.container_id = accounts.id")
+-        .where("last_active_at <= #{connection.date_subtract('?', 'COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period)')}", Time.now)
++      groups = Card.due_to_be_postponed_groups
++
++      if groups.any?
++        due_card_ids = groups.map { |cards| cards.select(:id).to_sql }.join(" UNION ALL ")
++        where(Arel.sql("cards.id IN (#{due_card_ids})"))
++      else
++        none
++      end
+     end
+ 
+     scope :postponing_soon, -> do
+@@ -25,10 +28,53 @@ module Card::Entropic
+ 
+   class_methods do
+     def auto_postpone_all_due
+-      due_to_be_postponed.find_each do |card|
+-        card.auto_postpone(user: card.account.system_user)
++      groups = due_to_be_postponed_groups
++
++      if groups.any?
++        system_users = User.where(role: :system).index_by(&:account_id)
++
++        groups.each do |cards|
++          cards.find_each(batch_size: 1000) do |card|
++            system_user = system_users.fetch(card.account_id) { card.account.system_user }
++            card.auto_postpone(user: system_user)
++          end
++        end
++      end
++
++      nil
++    end
++
++    def due_to_be_postponed_groups(now = Time.current)
++      board_entropies = Entropy.where(container_type: "Board")
++      overridden_board_ids = board_entropies.select(:container_id)
++
++      board_groups = board_entropies.distinct.pluck(:auto_postpone_period).map do |period|
++        boards = Board.joins(:entropy).where(entropies: { auto_postpone_period: period })
++
++        Card.active
++          .where(board_id: boards.select(:id), account_id: boards.select(:account_id))
++          .where("cards.last_active_at <= ?", entropy_cutoff(now, period))
++      end
++
++      account_entropies = Entropy.where(container_type: "Account")
++      account_groups = account_entropies.distinct.pluck(:auto_postpone_period).map do |period|
++        accounts = account_entropies.where(auto_postpone_period: period)
++
++        Card.active
++          .where(account_id: accounts.select(:container_id))
++          .where.not(board_id: overridden_board_ids)
++          .where("cards.last_active_at <= ?", entropy_cutoff(now, period))
+       end
++
++      board_groups + account_groups
+     end
++
++    private
++      def entropy_cutoff(now, period)
++        cutoff = now - period
++        cutoff = cutoff.change(usec: 0) if connection.adapter_name == "SQLite"
++        cutoff
++      end
+   end
+ 
+   def entropy
+diff --git a/test/models/card/entropic_test.rb b/test/models/card/entropic_test.rb
+index 848cfa7..ab8b662 100644
+--- a/test/models/card/entropic_test.rb
++++ b/test/models/card/entropic_test.rb
+@@ -33,30 +33,35 @@ class Card::EntropicTest < ActiveSupport::TestCase
+   end
+ 
+   test "auto postpone all due using the default account entropy" do
+-    entropies(:writebook_board).destroy
+-
+-    cards(:logo).update!(last_active_at: 1.day.ago - entropies("37s_account").auto_postpone_period)
+-    cards(:shipping).update!(last_active_at: 1.day.from_now - entropies("37s_account").auto_postpone_period)
+-
+-    assert_difference -> { Card.postponed.count }, +1 do
+-      Card.auto_postpone_all_due
++    freeze_time do
++      entropies(:writebook_board).destroy
++      cutoff = Time.current - entropies("37s_account").auto_postpone_period
++      cards(:logo).update!(last_active_at: cutoff)
++      cards(:shipping).update!(last_active_at: cutoff + 1.second)
++
++      assert_difference -> { Card.postponed.count }, +1 do
++        Card.auto_postpone_all_due
++      end
++
++      assert cards(:logo).reload.postponed?
++      assert_equal accounts("37s").system_user, cards(:logo).postponed_by
++      assert_not cards(:shipping).reload.postponed?
+     end
+-
+-    assert cards(:logo).reload.postponed?
+-    assert_equal accounts("37s").system_user, cards(:logo).postponed_by
+-    assert_not cards(:shipping).reload.postponed?
+   end
+ 
+   test "auto postpone all due using entropy defined at the board level" do
+-    cards(:logo).update!(last_active_at: 1.day.ago - entropies(:writebook_board).auto_postpone_period)
+-    cards(:shipping).update!(last_active_at: 1.day.from_now - entropies(:writebook_board).auto_postpone_period)
++    freeze_time do
++      cutoff = Time.current - entropies(:writebook_board).auto_postpone_period
++      cards(:logo).update!(last_active_at: cutoff)
++      cards(:shipping).update!(last_active_at: cutoff + 1.second)
+ 
+-    assert_difference -> { Card.postponed.count }, +1 do
+-      Card.auto_postpone_all_due
+-    end
++      assert_difference -> { Card.postponed.count }, +1 do
++        Card.auto_postpone_all_due
++      end
+ 
+-    assert cards(:logo).reload.postponed?
+-    assert_not cards(:shipping).reload.postponed?
++      assert cards(:logo).reload.postponed?
++      assert_not cards(:shipping).reload.postponed?
++    end
+   end
+ 
+   test "postponing soon scope" do
+@@ -85,4 +90,123 @@ class Card::EntropicTest < ActiveSupport::TestCase
+ 
+     assert_equal(cards(:logo, :radio).to_set, Card.postponing_soon.to_set)
+   end
++
++  test "due scope stays a relation and uses indexed per-period cutoffs with over 100,000 cards" do
++    freeze_time do
++      account = accounts("37s")
++      board = boards(:writebook)
++      creator = users(:david)
++      now = Time.current
++      cutoff = now - entropies(:writebook_board).auto_postpone_period
++
++      (1..100_001).each_slice(3_000) do |numbers|
++        Card.insert_all!(numbers.map do |number|
++          {
++            id: ActiveRecord::Type::Uuid.generate,
++            account_id: account.id,
++            board_id: board.id,
++            creator_id: creator.id,
++            number: 100_000 + number,
++            title: "Scale card #{number}",
++            status: "published",
++            last_active_at: number == 1 ? cutoff : now,
++            created_at: now,
++            updated_at: now
++          }
++        end)
++      end
++
++      relation = Card.due_to_be_postponed
++      sql = relation.to_sql
++
++      assert_kind_of ActiveRecord::Relation, relation
++      assert_includes sql, "UNION ALL"
++      assert_includes sql, "cards.last_active_at <="
++      assert_not_includes sql, "COALESCE"
++      assert_not_includes sql, "JOIN \"boards\""
++      assert_equal 1, relation.count
++
++      plan = ActiveRecord::Base.connection.execute("EXPLAIN QUERY PLAN #{sql}").map { |row| row["detail"] }
++
++      assert plan.any? { |line| line.include?("index_cards_on_account_id_and_last_active_at_and_status") }
++      assert_not plan.any? { |line| line.start_with?("SCAN cards") }
++
++      assert_nil Card.auto_postpone_all_due
++      assert Card.find_by!(number: 100_001).reload.postponed?
++    end
++  end
++
++  test "due scope respects every board override and account default cutoff" do
++    freeze_time do
++      board_entropy = entropies(:writebook_board)
++      account_entropy = entropies("37s_account")
++
++      Entropy::AUTO_POSTPONE_PERIODS_IN_SECONDS.each do |period|
++        board_entropy.update!(auto_postpone_period: period)
++        cutoff = Time.current - period
++        cards(:logo).update!(last_active_at: cutoff)
++        cards(:text).update!(last_active_at: cutoff + 1.second)
++
++        assert_includes Card.due_to_be_postponed, cards(:logo)
++        assert_not_includes Card.due_to_be_postponed, cards(:text)
++      end
++
++      board_entropy.destroy
++
++      Entropy::AUTO_POSTPONE_PERIODS_IN_SECONDS.each do |period|
++        account_entropy.update!(auto_postpone_period: period)
++        cutoff = Time.current - period
++        cards(:logo).update!(last_active_at: cutoff)
++        cards(:text).update!(last_active_at: cutoff + 1.second)
++
++        assert_includes Card.due_to_be_postponed, cards(:logo)
++        assert_not_includes Card.due_to_be_postponed, cards(:text)
++      end
++    end
++  end
++
++  test "auto postpone all due processes cards across a batch boundary" do
++    freeze_time do
++      account = accounts("37s")
++      board = boards(:writebook)
++      creator = users(:david)
++
++      Entropy.where(container_type: "Board").delete_all
++      Entropy.where(container_type: "Account").where.not(container_id: account.id).delete_all
++      Card.update_all(last_active_at: Time.current)
++
++      last_active_at = Time.current - 31.days
++      now = Time.current
++      Card.insert_all!((1..1001).map do |number|
++        {
++          id: ActiveRecord::Type::Uuid.generate,
++          account_id: account.id,
++          board_id: board.id,
++          creator_id: creator.id,
++          number: 10_000 + number,
++          title: "Batch card #{number}",
++          status: "published",
++          last_active_at: last_active_at,
++          created_at: now,
++          updated_at: now
++        }
++      end)
++
++      system_user = account.system_user
++      batch_queries = []
++      user_queries = []
++      subscriber = ActiveSupport::Notifications.subscribe("sql.active_record") do |_name, _started, _finished, _unique_id, payload|
++        batch_queries << payload[:sql] if payload[:name] == "Card Load"
++        user_queries << payload[:sql] if payload[:sql].include?("FROM \"users\"")
++      end
++
++      Card.any_instance.expects(:auto_postpone).with(user: system_user).times(1001)
++      assert_nil Card.auto_postpone_all_due
++
++      assert_equal 2, batch_queries.size, batch_queries.inspect
++      assert_equal 1, user_queries.size, user_queries.inspect
++    ensure
++      ActiveSupport::Notifications.unsubscribe(subscriber) if subscriber
++    end
++  end
+ end

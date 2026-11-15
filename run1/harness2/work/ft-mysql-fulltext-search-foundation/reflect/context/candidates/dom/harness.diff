@@ -1,0 +1,38 @@
+diff -ruN -x .keep base_harness/skills/card-query-page/SKILL.md candidates/dom/harness/skills/card-query-page/SKILL.md
+--- base_harness/skills/card-query-page/SKILL.md	1970-01-01 02:00:00
++++ candidates/dom/harness/skills/card-query-page/SKILL.md	2026-11-14 20:23:05
+@@ -0,0 +1,24 @@
++---
++name: card-query-page
++description: Building a new page/query over Fizzy cards and comments scoped by access
++---
++Operation: QUERY + RENDER. Input: request text in context/task.md (route, params, fields searched, ordering, visibility rules). Output: route + controller + view + model scope(s) + tests.
++
++Verified in this workspace (earlier runs on a search request; re-check with grep before relying):
++- Access scoping: `Current.user.accessible_cards` (app/models/user/accessor.rb) is the access-aware relation; it reflects current Access rows, so revoking access hides cards without extra code. Never query `Card` globally.
++- Drafts: `Card` has status enum with `published` scope; apply `.published` to cards. Comments on a draft are excluded by restricting to the published cards (query via card, not via Comment alone). Comments can exist on drafts in tests only via `save!(validate: false)`/`Comment.insert!` plus an `ActionText::RichText` row.
++- Rich text: card text lives in `action_text_rich_texts` (name 'description' for Card, 'body' for Comment; record_type 'Card'/'Comment'); associations `rich_text_description`, `rich_text_body`; `Comment.with_rich_text_body`. Bodies are stored as HTML.
++- Ordering: `Card.reverse_chronologically` (created_at desc, id desc) already exists; reuse it rather than writing new ordering.
++- Pagination: `set_page_and_extract_portion_from relation` in the controller and `with_automatic_pagination :name, @page do` in the view (see app/helpers/pagination_helper.rb and existing controllers).
++- Put query logic in a named scope on the model (Card / Comment, app/models/card.rb, comment.rb), not in the controller; the controller stays thin. Controller tests live in test/controllers/*_controller_test.rb (IntegrationTest, `sign_in_as :kevin`); fixtures include boards(:writebook), boards(:private), accounts("37s"); create records inside `Current.set(account: accounts("37s"), user: users(:kevin)) { ... }`.
++- Routes: add `get "search", to: ..., as: :search` style routes in config/routes.rb; check with `bin/rails routes -g <name>`.
++- Navigation entry: app/views/my/menus/_jump.html.erb uses `filter_hotkey_link`; add an entry if the page should be reachable.
++
++Checklist before finishing:
++1. Literal user input in LIKE: escape with `ActiveRecord::Base.sanitize_sql_like(term, "!")` and `ESCAPE '!'`; test `%`/`_` queries.
++2. Blank/missing `q` renders the page with no results and no error.
++3. Matches via comment must return the card once (EXISTS subquery or distinct), not duplicates.
++4. Highlighting: wrap matches with `<mark>` via Rails `highlight`/`excerpt` on plain text (`to_plain_text`) so content is HTML-escaped; test an HTML-bearing title does not inject markup.
++5. Tests cover: each searched field, ordering, revoked access, drafts (card and its comment), wildcard literal, blank query.
++6. If the task mentions migrations/schema/index tables, keep every schema file in db/ in sync (check `ls db`, both sqlite and mysql configs exist under config/database.*.yml); otherwise do not add migrations. Case-insensitivity of LIKE can differ between SQLite and MySQL; state it if unverified.
++7. No scratch files left in /app; run the new test file and `bin/rubocop` on touched files.
+diff -ruN -x .keep base_harness/system.md candidates/dom/harness/system.md
+--- base_harness/system.md	2026-11-14 20:23:05
++++ candidates/dom/harness/system.md	2026-11-14 20:23:05
+@@ -9,5 +9,6 @@
+ 3. Edit the source code to resolve the issue
+ 4. Verify your fix works by running your script again
+ 5. Test edge cases to ensure your fix is robust
++   When the request adds a read-only page or query over cards/comments (search, listing, filtering) scoped by board access, run `cat /opt/harness/skills/card-query-page/SKILL.md` and follow it.
+ 6. Submit your changes and finish your work by issuing the following command: `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`.
+    Do not combine it with any other command. <important>After this command, you cannot continue working on this task.</important>

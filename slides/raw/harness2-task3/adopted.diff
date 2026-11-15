@@ -1,0 +1,37 @@
+Only in demo/harness2/work/ft-mysql-fulltext-search-foundation/compose/context/harness/skills: card-query-page
+diff -ru demo/harnesses/h0/system.md demo/harness2/work/ft-mysql-fulltext-search-foundation/compose/context/harness/system.md
+--- demo/harnesses/h0/system.md	2026-11-14 12:40:58
++++ demo/harness2/work/ft-mysql-fulltext-search-foundation/compose/context/harness/system.md	2026-11-14 19:58:28
+@@ -9,5 +9,6 @@
+ 3. Edit the source code to resolve the issue
+ 4. Verify your fix works by running your script again
+ 5. Test edge cases to ensure your fix is robust
++   When the request adds a read-only page or query over cards/comments (search, listing, filtering) scoped by board access, run `cat /opt/harness/skills/card-query-page/SKILL.md` and follow it.
+ 6. Submit your changes and finish your work by issuing the following command: `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`.
+    Do not combine it with any other command. <important>After this command, you cannot continue working on this task.</important>
+diff -ru demo/harnesses/h0/tool_guidance.md demo/harness2/work/ft-mysql-fulltext-search-foundation/compose/context/harness/tool_guidance.md
+--- demo/harnesses/h0/tool_guidance.md	2026-11-14 12:40:58
++++ demo/harness2/work/ft-mysql-fulltext-search-foundation/compose/context/harness/tool_guidance.md	2026-11-14 19:58:29
+@@ -3,12 +3,18 @@
+ ### Create a new file:
+ 
+ ```bash
+-cat <<'EOF' > newfile.py
+-import numpy as np
+-hello = "ciao"
+-print(hello)
++cat <<'EOF' > newfile.rb
++puts "ciao"
+ EOF
+ ```
++
++### No Python in this sandbox
++
++`python3` is not installed. Do multi-line edits with `ruby`, `sed`, or a full `cat <<'EOF'` rewrite. After any scripted edit, `git diff` to confirm it applied.
++
++### Tests
++
++Run the test file you touched first, read failures fully, fix the cause. Run `bin/rubocop` on changed files and check `git status --short` for stray files before submitting.
+ 
+ ### Edit files with sed:
+ 

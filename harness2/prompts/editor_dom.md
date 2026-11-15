@@ -34,6 +34,8 @@ Do not diagnose commands, retries, reading order, time budgeting or tool use. A 
 
 The harness you produce runs on THIS task. VERIFIED FACTS ABOUT THIS WORKSPACE ARE THE MOST VALUABLE THING YOU CAN ENCODE -- they are what the base rollouts paid to discover, and what a solver most often gets wrong on its own. When the evidence establishes which existing file or class already handles part of the request, which command actually runs the relevant tests, or which of several look-alike places is the one that matters, WRITE THE FACT ITSELF into the relevant component -- "in this workspace, X is handled in file A; the tests for it are in file B" -- not merely the procedure for rediscovering it. A rule that tells the agent HOW to find something leaves the hardest step to the agent; the fact itself removes it. Anchor such facts ("in this workspace...") so a reader can tell fact from procedure, and record only what the evidence actually establishes -- a guessed fact is worse than none.
 
+A WORKSPACE FACT NEEDS THE REPOSITORY ITSELF AS ITS SOURCE. Record a fact only if a trajectory shows it in the repository: the output of a command (`cat`, `sed -n`, `grep -n`, `ls`, a test run) that shows the file and the line. An `agent.patch` shows what a run WROTE, not what the repository contains, and the base runs may all share the same mistake -- never turn a patch alone into a fact. For every fact you write, cite in your notes the run, the step and the file:line it rests on.
+
 Structure and PROCEDURE, by contrast, should be written for the codebase: the harness, if adopted, is stored in this codebase's library, where every later task reads it as an example. Procedure that would be wrong for a different feature task in the same codebase is scoped too narrowly; workspace facts are expected to differ and are labelled as such.
 
     workspace fact   "in this workspace, the request's behavior extends an existing concern
@@ -56,6 +58,10 @@ Every edit must trace to a moment in a trajectory. For each one ask: which run d
 Do not fix what the runs already got right, and do not restate what the harness already says clearly; duplicated instruction dilutes the rest.
 
 Do not hedge toward an average or try to cover every base -- commit to the single most defensible version of your dimension. A later stage compares and merges.
+
+# ONE COMPONENT PER PROPOSAL
+
+Your proposal changes EXACTLY ONE component: one of the four always-on files, OR one skill (its `SKILL.md` together with its trigger line in `system.md`). Your candidate will be rolled out __K__ times and compared, run by run, with the __NREF__ base rollouts; a later stage records what each edit did. When a candidate changes several components at once, no difference in its runs can be traced to any one of them and nothing is learned. So pick the single edit the evidence argues for most and leave the rest. A proposal that changes more than one component fails validation.
 
 # WHAT GOOD PROCESS LOOKS LIKE HERE
 
@@ -118,6 +124,7 @@ Then reply with ONE `<notes>` block and nothing else: for each change, the momen
 # YOUR WORKSPACE
 
 - `context/task.md` -- the request, exactly as the agent receives it.
+- `context/evidence.md` -- a script-built table of the base rollouts: outcome, steps, minutes, files in the patch, test commands and their last exit code, whether the full suite ran, the step of the first repository write. There is no score in it. Start here, then open the trajectories it points you to.
 - `context/harness/` -- the harness you are editing (currently the unmodified harness).
 - `context/references/r<n>/` -- __NREF__ rollouts of the unmodified harness on this task, each with:
   - `result.json`: outcome (`completed` or `agent_timeout`), steps, cost and duration. There is no score.

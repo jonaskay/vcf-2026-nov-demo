@@ -1,0 +1,120 @@
+1			
+2			
+3	2026-11-14T14:49:32Z	0,0	pwd && ls -la && find . -maxdepth 2 -type f | sort | head -200 ; cat /opt/harness/skills/card-derived-state/SKILL.md
+4	2026-11-14T14:49:36Z	0,0,0,0	cat AGENTS.md && printf '\\n--- CLAUDE ---\\n' && cat .claude/CLAUDE.md && printf '\\n--- SAAS AGENTS ---\\n' && cat saas/AGENTS.md ; grep -Rni "golden" app test | 
+5	2026-11-14T14:49:53Z	0,0,0,0	cat STYLE.md && printf '\\n--- card.rb ---\\n' && sed -n '1,240p' app/models/card.rb && printf '\\n--- eventable ---\\n' && cat app/models/card/eventable.rb && prin
+6	2026-11-14T14:50:03Z	0,0,0,0,0	test -f tmp/saas.txt && echo 'SaaS enabled' || echo 'SaaS disabled'; sed -n '1,180p' app/models/card.rb; sed -n '190,240p' db/schema.rb; sed -n '1,100p' app/mod
+7	2026-11-14T14:50:46Z	0,0,0,0,0	printf '%s\\n' '--- card templates ---'; cat app/views/cards/container/_gild.html.erb; cat app/views/cards/display/common/_stamp.html.erb; cat app/views/cards/di
+8	2026-11-14T14:52:26Z	0,0,0,0	grep -n -E '^  \\.card|\\.card__header|card__footer|card__id|card__title|card-perma' app/assets/stylesheets/cards.css | head -130; sed -n '1,180p' app/assets/styl
+9	2026-11-14T14:53:21Z	0	cat app/models/tagging.rb; cat app/models/assignment.rb; cat app/controllers/cards/taggings_controller.rb 2>/dev/null || true; cat app/controllers/cards/steps_c
+10	2026-11-14T14:54:40Z	0,0,0,0,0	cat app/models/filter/params.rb; cat app/models/filter/resources.rb; cat app/helpers/filters_helper.rb; sed -n '1,180p' app/views/filters/settings/_indexed_by.h
+11	2026-11-14T14:56:17Z	0	sed -n '370,505p' app/assets/stylesheets/cards.css; cat app/views/cards/drafts/_container.html.erb; cat app/views/prompts/cards/_card.html.erb; cat app/views/my
+12	2026-11-14T14:59:22Z	0,1,1,0	cat test/fixtures/entropies.yml; sed -n '1,150p' test/models/card/entropic_test.rb; sed -n '1,80p' test/models/comment_test.rb; cat app/models/card/eventable/sy
+13	2026-11-14T15:00:37Z	0	cat app/helpers/notifications_helper.rb; sed -n '1,140p' app/views/notifications/notification/_header.html.erb; sed -n '1,180p' app/views/notifications/notifica
+14	2026-11-14T15:03:21Z	0,0,0	cat app/views/events/_event.html.erb; cat app/views/events/day_timeline/_columns.html.erb; cat app/views/events/day_timeline/_column.html.erb; cat app/views/eve
+15	2026-11-14T15:04:16Z	0,1	cat app/models/watch.rb; cat app/models/pin.rb; cat app/models/card/not_now.rb; cat app/models/closure.rb; cat app/models/mention.rb; grep -Rni 'belongs_to :car
+16	2026-11-14T15:04:37Z	0,0	find app/controllers/cards -type f | sort | xargs grep -nE 'def (create|update|destroy)|track_event|touch_last_active|@card\\.' | head -300; find app/controllers
+17	2026-11-14T15:06:07Z	0,0	grep -Rni 'cards/display/mini' app/views; grep -RniE 'class: [^\\n]*card|class="card' app/views | head -300 ; cat app/views/notifications/notification/event/_bod
+18	2026-11-14T15:08:35Z	0	cat test/fixtures/assignments.yml; cat test/fixtures/closures.yml; cat test/fixtures/goldnesses.yml; cat app/models/card/goldness.rb; grep -Rni 'def watch_by\\|d
+19	2026-11-14T15:10:06Z	0,0,1	cat test/models/reaction_test.rb; grep -Rni 'comments.create!\\|comments.create' test/controllers/cards/comments_controller_test.rb test/models | head -100 ; cat
+20	2026-11-14T15:13:24Z	0	ruby -e 'puts Gem.loaded_specs["activerecord"]&.full_gem_path' 2>/dev/null || bundle show activerecord; grep -Rni 'belongs_to_touch_after_save_or_destroy' vendo
+21	2026-11-14T15:16:45Z	0,1,1	date -u +%Y%m%d%H%M%S; cat lib/fizzy.rb; cat .mise.toml; cat Gemfile | head -60 ; bin/rails runner 'puts Card.count; puts Rails.version; puts ActiveRecord::Base
+22	2026-11-14T15:18:15Z	0,0,0	cat app/views/my/pins/index.json.jbuilder; cat app/views/my/pins/_pin.html.erb; cat app/views/cards/_card.json.jbuilder; cat app/views/cards/index.json.jbuilder
+23	2026-11-14T15:18:18Z	0	sed -n '1,115p' docs/api/sections/cards.md; git status --short; git log --oneline -5
+24	2026-11-14T15:18:23Z	0	grep -Rni 'stalled' . --exclude-dir=.git --exclude='*.sqlite3' | head -100; git status --short
+25	2026-11-14T15:21:06Z	0,0	cat app/views/notifications/index/_unread_notifications.html.erb; cat app/views/notifications/index/_read_notifications.html.erb; cat app/views/notifications/in
+26	2026-11-14T15:21:58Z	0	grep -RniE '^\\s*def cache_version|override.*cache_version|cache_version' app/models app | head -100; grep -Rni 'cache_version' /usr/local/bundle/bundler/gems/ra
+27	2026-11-14T15:25:10Z	0,0	cat app/controllers/public/cards_controller.rb; cat app/controllers/cards_controller.rb; grep -RniE 'fresh_when.*card|expires_in.*card|etag:.*@card|@card.*fresh
+28	2026-11-14T15:26:00Z	0,0	grep -RniE '\\.badge|status.*badge|__badge|badge--' app/assets/stylesheets app/views | head -160; grep -RniE 'txt-(small|x-small)|fill-highlight.*border-radius.*
+29	2026-11-14T15:27:00Z	0	cat app/views/cards/display/preview/_board.html.erb; cat app/views/cards/display/perma/_board.html.erb; cat app/views/cards/display/common/_board.html.erb; cat 
+30	2026-11-14T15:27:06Z	0	grep -Rni 'accessible_cards' app/models/user* app/models/card*; sed -n '1,160p' app/models/user/accessible.rb; sed -n '1,100p' app/models/user.rb
+31	2026-11-14T15:29:19Z	0,0,0	find test/controllers -type f -path '*cards*' -maxdepth 4 | sort; find test/controllers/public -type f | sort | head -80 ; grep -Rni 'published_card_path\\|publi
+32	2026-11-14T15:29:48Z	0	grep -Rni 'def cache_version\\|def cache_key_with_version' /usr/local/bundle/bundler/gems/rails-*/activerecord/lib/active_record | head -20; sed -n '280,370p' /u
+33	2026-11-14T15:29:53Z	0	sed -n '80,145p' /usr/local/bundle/bundler/gems/rails-d0e506f131fa/activerecord/lib/active_record/integration.rb; cat app/views/cards/display/_previews.html.erb
+34	2026-11-14T15:30:55Z	0	cat app/views/cards/display/perma/_meta.html.erb; cat app/views/cards/display/public_preview/_meta.html.erb; cat app/views/cards/display/preview/_meta.html.erb
+35	2026-11-14T15:32:01Z	0	grep -nE '--color-(alert|negative|highlight|selected|card-complete|ink-inverted)|--lch-' app/assets/stylesheets/_global.css | head -160
+36	2026-11-14T15:32:30Z	0	cat app/models/user/accessor.rb; cat app/models/card/accessible.rb
+37	2026-11-14T15:34:03Z	0	cat test/controllers/public/cards_controller_test.rb; cat test/fixtures/boards/publications.yml 2>/dev/null || true; find test/fixtures -iname '*publication*' -
+38	2026-11-14T15:34:54Z	0	grep -nE -- '--color-(alert|negative|highlight|selected|card-complete|ink-inverted|ink-darker|ink-dark)|--lch-' app/assets/stylesheets/_global.css | head -200; 
+39	2026-11-14T15:36:53Z	0	cat app/models/storage/tracked.rb; grep -RniE 'track_event|last_active_at' app/models/card app/models/storage app/models/concerns | head -300
+40	2026-11-14T15:37:09Z	0,0,0	sed -n '1,280p' test/models/account/import_test.rb; sed -n '1,240p' test/models/account/export_test.rb; find test -path '*data_transfer*' -type f | sort ; grep 
+41	2026-11-14T15:39:36Z	0	sed -n '1,70p' docs/api/sections/notifications.md; cat app/models/notification.rb; grep -Rni 'cards/.*_card\\|cards/card' app/views/notifications app/views
+42	2026-11-14T15:42:33Z	0	cat <<'EOF' > test/models/card/stalled_test.rb require "test_helper" class Card::StalledTest < ActiveSupport::TestCase   setup do     Current.session = sessions
+43	2026-11-14T15:42:46Z	0	ruby <<'RUBY' path = "test/controllers/cards_controller_test.rb" source = File.read(path) needle = <<~'TEST'   test "index as JSON can filter by maybe index" do
+44	2026-11-14T15:42:49Z	0	sed -n '1,65p' test/controllers/cards_controller_test.rb | cat -A; ruby -e 's=File.read("test/controllers/cards_controller_test.rb"); puts s.include?(%q{  test 
+45	2026-11-14T15:43:34Z	0	grep -Rni 'only_closed?' app test; grep -Rni 'include_not_now_cards\\|include_closed_cards' app
+46	2026-11-14T15:43:46Z	0,1	grep -RniE '\\.select\\([^\\n]*cards|Card.*select|cards\\.select|accessible_cards\\.select|\\.select\\(:id' app/models app/controllers | head -200 ; grep -RniE 'select
+47	2026-11-14T15:45:09Z	0,0	bin/rails db:test:prepare ; ruby <<'RUBY' path = "test/controllers/cards_controller_test.rb" source = File.read(path) marker = "  test \\"create a new draft\\" do
+48	2026-11-14T15:45:14Z	1	bin/rails test test/models/card/stalled_test.rb test/controllers/cards_controller_test.rb test/controllers/public/cards_controller_test.rb
+49	2026-11-14T15:46:34Z	127	cat <<'EOF' > app/models/card/stalled.rb module Card::Stalled   extend ActiveSupport::Concern   STALLED_AFTER = 2.weeks   COMMENT_BURST_THRESHOLD = 3   COMMENT_
+50	2026-11-14T15:46:42Z	0	git status --short; ls db/migrate/20261114160000_add_burst_at_to_cards.rb 2>/dev/null; sed -n '1,120p' app/models/card/stalled.rb; sed -n '1,45p' app/models/car
+51	2026-11-14T15:47:29Z	0	ruby <<'RUBY_SCRIPT' path = "app/models/card.rb" source = File.read(path) source.sub!("    Entropic, Eventable, Exportable, Golden, Mentions, Multistep, Pinnabl
+52	2026-11-14T15:47:36Z	0	sed -n '1,80p' app/models/card.rb; cat app/models/card/stalled.rb; sed -n '1,45p' app/models/card/eventable.rb; sed -n '1,24p' app/models/comment/eventable.rb; 
+53	2026-11-14T15:48:46Z	0	cat <<'EOF' > app/models/card/eventable.rb module Card::Eventable   extend ActiveSupport::Concern   include ::Eventable   included do     before_create { self.l
+54	2026-11-14T15:48:57Z	0	ruby <<'RUBY_SCRIPT' path = "app/models/comment/eventable.rb" source = File.read(path) source.sub!("  def event_was_created(event)\\n    card.touch_last_active_a
+55	2026-11-14T15:49:02Z	0	sed -n '1,30p' app/models/account/data_transfer/record_set.rb; sed -n '66,82p' app/models/account/data_transfer/manifest.rb; sed -n '1,38p' app/models/card/even
+56	2026-11-14T15:49:07Z	0	ruby <<'RUBY_SCRIPT' path = "app/models/account/data_transfer/manifest.rb" source = File.read(path) old = "    def record_set_for(model)\\n      Account::DataTra
+57	2026-11-14T15:49:38Z	0	ruby <<'RUBY_SCRIPT' path = "app/models/card/stalled.rb" source = File.read(path) source.sub!("      where(burst_at: ..(Time.current - STALLED_AFTER))", "      
+58	2026-11-14T15:50:15Z	0	ruby <<'RUBY_SCRIPT' path = "app/helpers/cards_helper.rb" source = File.read(path) source.sub!("      options.delete(:class),\\n      (\\"golden-effect\\" if card.
+59	2026-11-14T15:50:28Z	0	cat <<'EOF' > app/helpers/cards_helper.rb module CardsHelper   def card_article_tag(card, id: dom_id(card, :article), data: {}, **options, &block)     classes =
+60	2026-11-14T15:50:36Z	0	ruby <<'RUBY_SCRIPT' path = "app/views/cards/_card.json.jbuilder" source = File.read(path) source.sub!("  json.golden card.golden?\\n", "  json.golden card.golde
+61	2026-11-14T15:51:11Z	0	grep -n 'add_foreign_key "cards"\\|foreign_key.*cards' db/schema_sqlite.rb db/schema.rb; grep -n 'foreign_keys' db/schema_sqlite.rb | head -30; sed -n '1,180p' t
+62	2026-11-14T15:51:17Z	0	RAILS_ENV=test bin/rails db:migrate && bin/rails db:test:prepare && grep -n -A20 -B3 'create_table "cards"' db/schema_sqlite.rb
+63	2026-11-14T15:51:29Z	1,0	bin/rails test test/models/card/stalled_test.rb ; bin/rails test test/models/card/eventable_test.rb test/models/card/closeable_test.rb test/models/card/assignab
+64	2026-11-14T15:51:50Z	0	nl -ba test/models/card/stalled_test.rb | sed -n '10,110p'; bin/rails runner 'puts Card.ancestors.take(20).inspect; puts Card.instance_method(:cache_version).ow
+65	2026-11-14T15:52:12Z	1	ruby <<'RUBY_SCRIPT' path = "app/models/card/eventable.rb" source = File.read(path) source.sub!("      unless was_just_published?\\n", "      unless was_just_pub
+66	2026-11-14T15:52:24Z	1	ruby <<'RUBY_SCRIPT' path = "test/models/card/stalled_test.rb" source = File.read(path) source.sub!("    travel_to burst_time + 2.weeks do\\n      assert card.re
+67	2026-11-14T15:52:40Z	0	ruby <<'RUBY_SCRIPT' path = "test/models/card/stalled_test.rb" source = File.read(path) source.sub!("    first_comment_time = Time.current\\n\\n    create_comment
+68	2026-11-14T15:53:03Z	0	git status --short; grep -n -A20 -B3 'create_table "cards"' db/schema.rb db/schema_sqlite.rb; git diff -- db/schema_sqlite.rb | head -100
+69	2026-11-14T15:53:57Z	0	git checkout -- db/cable_schema.rb ruby <<'RUBY_SCRIPT' path = "db/schema.rb" source = File.read(path) source.sub!("ActiveRecord::Schema[8.2].define(version: 20
+70	2026-11-14T15:54:07Z	0	ruby <<'RUBY_SCRIPT' path = "app/assets/stylesheets/cards.css" source = File.read(path) marker = "  .card__background {" addition = <<~'CSS'   .card--notificati
+71	2026-11-14T15:54:11Z	0	sed -n '36,60p' test/controllers/cards_controller_test.rb; tail -20 test/controllers/public/cards_controller_test.rb; nl -ba app/assets/stylesheets/cards.css | 
+72	2026-11-14T15:54:49Z	0	ruby <<'RUBY_SCRIPT' [ "test/controllers/cards_controller_test.rb", "test/controllers/public/cards_controller_test.rb" ].each do |path|   source = File.read(pat
+73	2026-11-14T15:55:44Z	0	ruby <<'RUBY_SCRIPT' path = "test/models/account/data_transfer/record_set_test.rb" source = File.read(path) marker = '  test "check accepts polymorphic type in 
+74	2026-11-14T15:55:57Z	0	grep -n -A20 -B2 'create_table "cards"' db/schema.rb db/schema_sqlite.rb; sed -n '1,180p' app/models/card/stalled.rb; sed -n '1,120p' app/models/card/eventable.
+75	2026-11-14T15:56:28Z	0	cat test/models/card/postponable_test.rb; grep -RniE 'auto_postponed|last_active_at.*postpon' test/models test/controllers
+76	2026-11-14T15:57:22Z	0	grep -Rni '\\.in?(%w\\[' app/models | head; sed -n '60,90p' app/models/account/data_transfer/manifest.rb; grep -n -A14 -B3 'card__stalled' app/assets/stylesheets/
+77	2026-11-14T15:57:51Z	0	ruby <<'RUBY_SCRIPT' path = "app/assets/stylesheets/cards.css" source = File.read(path) start = source.index(".card__stalled {") || raise("stalled badge stylesh
+78	2026-11-14T15:57:59Z	0	sed -n '37,55p' docs/api/sections/cards.md; sed -n '91,108p' docs/api/sections/cards.md; sed -n '20,42p' docs/api/sections/notifications.md; sed -n '1,15p' app/
+79	2026-11-14T15:58:20Z	0	ruby <<'RUBY_SCRIPT' path = "app/assets/stylesheets/cards.css" source = File.read(path) start = source.index(".card__stalled {") || raise("stalled badge stylesh
+80	2026-11-14T15:59:16Z	0	ruby <<'RUBY_SCRIPT' path = "app/assets/stylesheets/cards.css" source = File.read(path) source.gsub!(/[ \\t]+\\n/, "\\n") File.write(path, source) path = "test/con
+81	2026-11-14T16:00:07Z	0	git diff -- app/models/card.rb app/models/card/stalled.rb app/models/card/eventable.rb app/models/comment/eventable.rb app/models/filter/fields.rb app/helpers/c
+82	2026-11-14T16:01:04Z	0	ruby <<'RUBY_SCRIPT' [ [ "test/controllers/notifications_controller_test.rb", 'test "notification JSON shows whether its card is stalled"', '  test "index as JS
+83	2026-11-14T16:01:43Z	0	ruby <<'RUBY_SCRIPT' path = "test/controllers/notifications_controller_test.rb" source = File.read(path) marker = '  test "index as JSON includes an explicit nu
+84	2026-11-14T16:02:27Z	0	sed -i 's/record_burst!/record_burst/g' app/models/card/stalled.rb app/models/card/eventable.rb && grep -Rni 'record_burst' app/models test/models/card/stalled_
+85	2026-11-14T16:02:34Z	0	git diff -- app/models/card/stalled.rb app/models/card.rb app/models/card/eventable.rb app/models/comment/eventable.rb app/models/filter/fields.rb app/helpers/c
+86	2026-11-14T16:03:17Z	1,0	bin/rails test ; bin/rubocop app/helpers/cards_helper.rb app/helpers/notifications_helper.rb app/models/card.rb app/models/card/eventable.rb app/models/card/sta
+87	2026-11-14T16:03:44Z	1	nl -ba test/models/card/stalled_test.rb | sed -n '58,78p'; bin/rails test test/models/card/stalled_test.rb -v
+88	2026-11-14T16:03:55Z	1	ruby <<'RUBY_SCRIPT' path = "test/models/card/stalled_test.rb" source = File.read(path) source.sub!("    card.toggle_assignment(users(:kevin))\\n    assert_nil c
+89	2026-11-14T16:04:10Z	0	ruby <<'RUBY_SCRIPT' path = "app/models/card/eventable.rb" source = File.read(path) old = """      if event.action.in?(%w[ card_assigned card_reopened ])       
+90	2026-11-14T16:04:18Z	0,0	bin/rails test ; bin/rubocop app/helpers/cards_helper.rb app/helpers/notifications_helper.rb app/models/card.rb app/models/card/eventable.rb app/models/card/sta
+91	2026-11-14T16:04:54Z	0	git diff --stat && git status --short && printf '\\n--- new concern ---\\n' && cat app/models/card/stalled.rb && printf '\\n--- migration ---\\n' && cat db/migrate/
+92	2026-11-14T16:04:59Z	0	grep -Rnl '^test "' test/models/card/stalled_test.rb test/models/account/data_transfer/record_set_test.rb test/controllers/cards_controller_test.rb test/control
+93	2026-11-14T16:05:49Z	1	ruby <<'RUBY_SCRIPT' path = "test/controllers/notifications_controller_test.rb" source = File.read(path) start_marker = 'test "notification HTML shows a stalled
+94	2026-11-14T16:05:53Z	0	sed -n '40,70p' test/controllers/notifications_controller_test.rb; sed -n '57,88p' test/models/account/data_transfer/record_set_test.rb; bin/rails test test/con
+95	2026-11-14T16:06:53Z	0	cat bin/ci; sed -n '1,90p' app/models/card/stalled.rb; sed -n '1,45p' app/models/card/eventable.rb; sed -n '1,30p' app/models/comment/eventable.rb; sed -n '1,11
+96	2026-11-14T16:06:59Z	0	head -20 app/views/cards/_card.json.jbuilder; head -8 app/views/notifications/_notification.json.jbuilder; head -5 app/views/notifications/_notification.html.er
+97	2026-11-14T16:07:46Z	0	grep -Rni 'cached: ->' app/views
+98	2026-11-14T16:09:07Z	0	git diff -- app/models/card.rb app/models/card/eventable.rb app/models/comment/eventable.rb app/models/filter/fields.rb app/views/cards/_card.json.jbuilder app/
+99	2026-11-14T16:09:18Z	0	grep -Rni 'def cache!' /usr/local/bundle/gems/jbuilder-* /usr/local/bundle/bundler/gems/jbuilder-* 2>/dev/null | head -20; grep -Rni 'cache!.*key' /usr/local/bu
+100	2026-11-14T16:09:24Z	0	sed -n '64,112p' /usr/local/bundle/gems/jbuilder-2.14.1/lib/jbuilder/jbuilder_template.rb; grep -Rni 'cache_key' /usr/local/bundle/gems/jbuilder-2.14.1/lib/jbui
+101	2026-11-14T16:09:30Z	0	sed -n '45,95p' /usr/local/bundle/bundler/gems/rails-*/activerecord/lib/active_record/integration.rb; sed -n '180,225p' /usr/local/bundle/gems/jbuilder-2.14.1/l
+102	2026-11-14T16:09:46Z	1	grep -Rni 'def expand_cache_key' /usr/local/bundle/bundler/gems/rails-*/activesupport/lib/active_support/cache.rb /usr/local/bundle/bundler/gems/rails-*/actives
+103	2026-11-14T16:10:26Z	1	cat app/controllers/boards_controller.rb; grep -Rni 'def set_page_and_extract_portion_from' app
+104	2026-11-14T16:11:48Z	1	cat app/models/user/day_timeline.rb; cat app/models/day_timeline/column.rb 2>/dev/null || true; grep -Rni 'class DayTimeline' app/models
+105	2026-11-14T16:13:08Z	0	ruby <<'RUBY_SCRIPT' path = "app/views/cards/_card.json.jbuilder" source = File.read(path) source.sub!("json.cache! card do", "json.cache! [ card, card.stalled?
+106	2026-11-14T16:13:36Z	0	grep -Rni 'cache_key' test/models/user test/models | grep -E 'timeline|day_timeline|events' | head -100; cat app/views/events/day_timeline/_columns.html.erb; ca
+107	2026-11-14T16:13:54Z	0	grep -Rni 'fresh_when' app/controllers/{boards_controller.rb,public,boards} 2>/dev/null | head -100; sed -n '80,115p' app/controllers/boards_controller.rb; for 
+108	2026-11-14T16:14:29Z	0	ruby <<'RUBY_SCRIPT' path = "app/views/events/day_timeline/_columns.html.erb" source = File.read(path) source.sub!("<% cache [ day_timeline.events, Time.zone.na
+109	2026-11-14T16:14:41Z	1	ruby <<'RUBY_SCRIPT' path = "app/views/events/day_timeline/_columns.html.erb" source = File.read(path) source.sub!("<% cache [ day_timeline.events, Time.zone.na
+110	2026-11-14T16:14:49Z	1	ruby <<'RUBY_SCRIPT' path = "app/models/user/day_timeline.rb" source = File.read(path) old = '    timeline_events = events\\\\n    stalled_cards = timeline_events
+111	2026-11-14T16:14:59Z	0	sed -i 's/event\\.card_id, event\\.card\\.stalled?/event.card.id, event.card.stalled?/g' app/models/user/day_timeline.rb app/views/events/day_timeline/_columns.htm
+112	2026-11-14T16:15:12Z	0	sed -n '1,130p' test/controllers/events_controller_test.rb; grep -n 'events' test/fixtures/events.yml | head
+113	2026-11-14T16:15:22Z	0	ruby <<'RUBY_SCRIPT' path = "test/controllers/events_controller_test.rb" source = File.read(path) marker = '  test "index with a specific timezone" do' test = <
+114	2026-11-14T16:15:38Z	1,0	bin/rails test ; bin/rubocop app/helpers/cards_helper.rb app/helpers/notifications_helper.rb app/models/card.rb app/models/card/eventable.rb app/models/card/sta
+115	2026-11-14T16:16:07Z	1,0	bin/rails test test/models/storage/totaled_test.rb ; git diff --check && git status --short && git diff --stat
+116	2026-11-14T16:16:16Z	0	sed -n '1,150p' test/models/storage/totaled_test.rb; grep -Rni 'class Storage::Totaled\\|materialize_storage\\|cursor' app/models/storage app/models | head -200; 
+117	2026-11-14T16:16:32Z	0,0	bin/rails test test/models/storage/totaled_test.rb -i '/materialize_storage_updates_cursor_to_latest_entry/' ; bin/rails test test/models/card/stalled_test.rb t
+118	2026-11-14T16:16:56Z	0	bin/rails test
+119	2026-11-14T16:18:05Z	0,0	bin/rails test ; bin/rubocop app/helpers/cards_helper.rb app/helpers/notifications_helper.rb app/models/card.rb app/models/card/eventable.rb app/models/card/sta
+120	2026-11-14T16:19:43Z		git diff --check && git status --short && git diff --stat ; grep -n '^ActiveRecord::Schema\\|burst_at\\|index_cards_on_account_id_and_burst_at' db/schema.rb db/sc

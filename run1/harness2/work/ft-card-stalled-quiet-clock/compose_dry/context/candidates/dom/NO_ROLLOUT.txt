@@ -1,0 +1,1 @@
+Not rolled out: this is a dry run of the pipeline, so no candidate was executed.

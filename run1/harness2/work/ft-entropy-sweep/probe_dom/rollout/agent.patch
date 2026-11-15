@@ -1,0 +1,143 @@
+diff --git a/app/models/account.rb b/app/models/account.rb
+index 687a46a..dea16fa 100644
+--- a/app/models/account.rb
++++ b/app/models/account.rb
+@@ -3,6 +3,7 @@ class Account < ApplicationRecord
+ 
+   has_one :join_code, dependent: :destroy
+   has_many :users, dependent: :destroy
++  has_one :system_user, -> { where(role: :system) }, class_name: "User"
+   has_many :boards, dependent: :destroy
+   has_many :cards, dependent: :destroy
+   has_many :webhooks, dependent: :destroy
+@@ -38,7 +39,7 @@ class Account < ApplicationRecord
+   end
+ 
+   def system_user
+-    users.find_by!(role: :system)
++    association(:system_user).reader || raise(ActiveRecord::RecordNotFound)
+   end
+ 
+   def active?
+diff --git a/app/models/card/entropic.rb b/app/models/card/entropic.rb
+index ebaad78..8401199 100644
+--- a/app/models/card/entropic.rb
++++ b/app/models/card/entropic.rb
+@@ -3,11 +3,16 @@ module Card::Entropic
+ 
+   included do
+     scope :due_to_be_postponed, -> do
++      now = Time.now
++      # A card newer than the shortest supported period cannot be due.
++      minimum_period_cutoff = now - Entropy::AUTO_POSTPONE_PERIODS_IN_SECONDS.min
++
+       active
+         .joins(board: :account)
+         .left_outer_joins(board: :entropy)
+         .joins("LEFT OUTER JOIN entropies AS account_entropies ON account_entropies.account_id = accounts.id AND account_entropies.container_type = 'Account' AND account_entropies.container_id = accounts.id")
+-        .where("last_active_at <= #{connection.date_subtract('?', 'COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period)')}", Time.now)
++        .where("cards.last_active_at <= ?", minimum_period_cutoff)
++        .where("cards.last_active_at <= #{connection.date_subtract('?', 'COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period)')}", now)
+     end
+ 
+     scope :postponing_soon, -> do
+@@ -25,7 +30,7 @@ module Card::Entropic
+ 
+   class_methods do
+     def auto_postpone_all_due
+-      due_to_be_postponed.find_each do |card|
++      due_to_be_postponed.preload(account: :system_user).find_each do |card|
+         card.auto_postpone(user: card.account.system_user)
+       end
+     end
+diff --git a/db/migrate/20260219120000_add_status_and_last_active_at_index_to_cards.rb b/db/migrate/20260219120000_add_status_and_last_active_at_index_to_cards.rb
+new file mode 100644
+index 0000000..46385a2
+--- /dev/null
++++ b/db/migrate/20260219120000_add_status_and_last_active_at_index_to_cards.rb
+@@ -0,0 +1,5 @@
++class AddStatusAndLastActiveAtIndexToCards < ActiveRecord::Migration[8.2]
++  def change
++    add_index :cards, [:status, :last_active_at]
++  end
++end
+diff --git a/db/schema.rb b/db/schema.rb
+index 99e6be9..848c6cb 100644
+--- a/db/schema.rb
++++ b/db/schema.rb
+@@ -10,7 +10,7 @@
+ #
+ # It's strongly recommended that you check this file into your version control system.
+ 
+-ActiveRecord::Schema[8.2].define(version: 2026_02_18_120000) do
++ActiveRecord::Schema[8.2].define(version: 2026_02_19_120000) do
+   create_table "accesses", id: :uuid, charset: "utf8mb4", collation: "utf8mb4_0900_ai_ci", force: :cascade do |t|
+     t.datetime "accessed_at"
+     t.uuid "account_id", null: false
+@@ -231,6 +231,7 @@ ActiveRecord::Schema[8.2].define(version: 2026_02_18_120000) do
+     t.index ["account_id", "number"], name: "index_cards_on_account_id_and_number", unique: true
+     t.index ["board_id"], name: "index_cards_on_board_id"
+     t.index ["column_id"], name: "index_cards_on_column_id"
++    t.index ["status", "last_active_at"], name: "index_cards_on_status_and_last_active_at"
+   end
+ 
+   create_table "closers_filters", id: false, charset: "utf8mb4", collation: "utf8mb4_0900_ai_ci", force: :cascade do |t|
+diff --git a/db/schema_sqlite.rb b/db/schema_sqlite.rb
+index 00125d1..8456b00 100644
+--- a/db/schema_sqlite.rb
++++ b/db/schema_sqlite.rb
+@@ -10,7 +10,7 @@
+ #
+ # It's strongly recommended that you check this file into your version control system.
+ 
+-ActiveRecord::Schema[8.2].define(version: 2026_02_18_120000) do
++ActiveRecord::Schema[8.2].define(version: 2026_02_19_120000) do
+   create_table "accesses", id: :uuid, force: :cascade do |t|
+     t.datetime "accessed_at"
+     t.uuid "account_id", null: false
+@@ -231,6 +231,7 @@ ActiveRecord::Schema[8.2].define(version: 2026_02_18_120000) do
+     t.index ["account_id", "number"], name: "index_cards_on_account_id_and_number", unique: true
+     t.index ["board_id"], name: "index_cards_on_board_id"
+     t.index ["column_id"], name: "index_cards_on_column_id"
++    t.index ["status", "last_active_at"], name: "index_cards_on_status_and_last_active_at"
+   end
+ 
+   create_table "closers_filters", id: false, force: :cascade do |t|
+diff --git a/test/models/card/entropic_test.rb b/test/models/card/entropic_test.rb
+index 848cfa7..b252e48 100644
+--- a/test/models/card/entropic_test.rb
++++ b/test/models/card/entropic_test.rb
+@@ -59,6 +59,33 @@ class Card::EntropicTest < ActiveSupport::TestCase
+     assert_not cards(:shipping).reload.postponed?
+   end
+ 
++  test "a card just newer than the entropy cutoff is not postponed" do
++    freeze_time
++
++    entropies(:writebook_board).update! auto_postpone_period: 3.days
++    cards(:logo).update! last_active_at: 3.days.ago
++    cards(:shipping).update! last_active_at: 3.days.ago + 1.second
++
++    Card.auto_postpone_all_due
++
++    assert cards(:logo).reload.postponed?
++    assert_not cards(:shipping).reload.postponed?
++  end
++
++  test "auto postpone all due uses a board period shorter than the account default" do
++    freeze_time
++
++    entropies("37s_account").update! auto_postpone_period: 30.days
++    entropies(:writebook_board).update! auto_postpone_period: 3.days
++    cards(:logo).update! last_active_at: 4.days.ago
++    cards(:shipping).update! last_active_at: 2.days.ago
++
++    Card.auto_postpone_all_due
++
++    assert cards(:logo).reload.postponed?
++    assert_not cards(:shipping).reload.postponed?
++  end
++
+   test "postponing soon scope" do
+     cards(:logo, :shipping).each(&:published!)
+ 
