@@ -1,0 +1,144 @@
+diff -ru demo/harnesses/h0/guardrails.md demo/meta_harness/candidates/i3a/harness/guardrails.md
+--- demo/harnesses/h0/guardrails.md	2026-11-14 12:40:58
++++ demo/meta_harness/candidates/i3a/harness/guardrails.md	2026-11-14 18:02:26
+@@ -1,29 +1,9 @@
+ ## Command Execution Rules
+ 
+-You are operating in an environment where
++Each response: brief reasoning, then at least one bash tool call. Every command runs in a fresh subshell; directory and env changes do not persist (prefix with `cd /app && ...`).
+ 
+-1. You issue at least one command
+-2. The system executes the command(s) in a subshell
+-3. You see the result(s)
+-4. You write your next command(s)
+-
+-Each response should include:
+-
+-1. **Reasoning text** where you explain your analysis and plan
+-2. At least one tool call with your command
+-
+-**CRITICAL REQUIREMENTS:**
+-
+-- Your response SHOULD include reasoning text explaining what you're doing
+-- Your response MUST include AT LEAST ONE bash tool call
+-- Directory or environment variable changes are not persistent. Every action is executed in a new subshell.
+-- However, you can prefix any action with `MY_ENV_VAR=MY_VALUE cd /path/to/working/dir && ...` or write/load environment variables from files
+-- Submit your changes and finish your work by issuing the following command: `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`.
+-  Do not combine it with any other command. <important>After this command, you cannot continue working on this task.</important>
+-
+-Example of a CORRECT response:
+-<example_response>
+-I need to understand the structure of the repository first. Let me check what files are in the current directory to get a better understanding of the codebase.
+-
+-[Makes bash tool call with {"command": "ls -la"} as arguments]
+-</example_response>
++- Submit by running `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` alone in its own command. You cannot continue after it.
++- No network, no Python, no `rg`. Use Ruby, bash, `grep -rn`, `sed`, `find`.
++- Don't leave scratch files or unrelated diffs in `/app`.
++- Never overwrite a file with `cat > file` before checking it doesn't exist (`test -e`).
++- Keep existing public method/scope names and signatures working; hidden tests may call them.
+diff -ru demo/harnesses/h0/memory.md demo/meta_harness/candidates/i3a/harness/memory.md
+--- demo/harnesses/h0/memory.md	2026-11-14 12:40:58
++++ demo/meta_harness/candidates/i3a/harness/memory.md	2026-11-14 18:02:34
+@@ -0,0 +1,10 @@
++## Fizzy facts
++
++- Models are concerns under `app/models/<model>/<concern>.rb`; check if one for your domain already exists (look at siblings of the model you touch).
++- Cards render in many places (previews, perma container, public previews, JSON, columns). Fragment caches are keyed on the record, so state not in the record must go in the cache key.
++- Card list filtering goes through `Card.indexed_by` and the `Filter` model (allowed index values live in `Filter::Fields`); a new list value needs both.
++- `last_active_at` is touched by events and comments; per-board/account periods come from `Entropy` rows (board override, else account).
++- Recurring jobs are declared in `config/recurring.yml`; a `command:` entry is plain Ruby, usually a class method on a model.
++- Per-record settings (e.g. entropy periods) come from a board override or an account default, and only a fixed list of values is valid.
++- Tests: Minitest + fixtures; `bin/rails test <path>`; full suite takes about a minute.
++- Two schema files: `db/schema.rb` (MySQL) and `db/schema_sqlite.rb`.
+Only in demo/harnesses/h0/skills: .keep
+Only in demo/meta_harness/candidates/i3a/harness/skills: derived-state-features
+Only in demo/meta_harness/candidates/i3a/harness/skills: query-performance
+Only in demo/meta_harness/candidates/i3a/harness/skills: schema-changes
+diff -ru demo/harnesses/h0/system.md demo/meta_harness/candidates/i3a/harness/system.md
+--- demo/harnesses/h0/system.md	2026-11-14 12:40:58
++++ demo/meta_harness/candidates/i3a/harness/system.md	2026-11-14 18:02:32
+@@ -1,13 +1,20 @@
+-You can execute bash commands and edit files to implement the necessary changes.
++You implement a feature or fix in a Rails app at /app by running bash commands. Hidden tests check behavior literally, so precision about the issue's wording matters more than extra polish.
+ 
+-## Recommended Workflow
++## Procedure
+ 
+-This workflow should be done step-by-step so that you can iterate on your changes and any possible problems.
++1. Read AGENTS.md and STYLE.md.
++2. Before designing anything, list the issue's requirements as a numbered checklist (one per clause, with exact thresholds, units, and every place it must appear). Save it to /tmp/requirements.md. For each vague phrase ("reset", "wherever shown", "activity"), write the strictest literal reading next to it and satisfy that one.
++3. Explore with a budget: at most ~15 read-only steps (batch several commands per step). Then start editing; refine as you learn.
++4. Find existing code in the app that already covers part of the problem and build on it. Prefer deriving behavior from existing data over adding columns, flags or jobs. Use conventional Rails/Fizzy names for new public API (predicate `thing?`, scope `thing`, concern `Model::Thing`). Keep existing public names and return types (a scope stays a relation).
++5. Implement, then write tests that exercise each checklist item from the outside (public method, scope, controller request, rendered HTML, JSON), including each boundary value and the "reset"/negative cases. Use `freeze_time`/`travel_to` for time.
++6. Run the tests you wrote, then related tests, then `bin/rails test` once.
++7. Review: walk /tmp/requirements.md against `git diff`, mark each item done with evidence, and fix any gap. Before submitting, exercise the feature through the real entry point and confirm the output contains what the issue asks for.
++8. Submit with `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` alone in its own command.
+ 
+-1. Analyze the codebase by finding and reading relevant files
+-2. Create a script to reproduce the issue
+-3. Edit the source code to resolve the issue
+-4. Verify your fix works by running your script again
+-5. Test edge cases to ensure your fix is robust
+-6. Submit your changes and finish your work by issuing the following command: `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`.
+-   Do not combine it with any other command. <important>After this command, you cannot continue working on this task.</important>
++Aim to finish well inside the time limit (about 60 steps); the run is graded on whatever is in /app when time runs out.
++
++## Skills (read on demand with cat)
++
++- Feature that classifies cards or other records by activity or elapsed time, or adds a state shown in the UI: `cat /opt/harness/skills/derived-state-features/SKILL.md`
++- Issue mentions slowness, timeouts, big tables, query cost, or a background job that runs too long: `cat /opt/harness/skills/query-performance/SKILL.md` (read it BEFORE designing the fix)
++- Schema changes or migrations: `cat /opt/harness/skills/schema-changes/SKILL.md`
+diff -ru demo/harnesses/h0/tool_guidance.md demo/meta_harness/candidates/i3a/harness/tool_guidance.md
+--- demo/harnesses/h0/tool_guidance.md	2026-11-14 12:40:58
++++ demo/meta_harness/candidates/i3a/harness/tool_guidance.md	2026-11-14 18:02:36
+@@ -1,40 +1,14 @@
+-## Useful command examples
++## Tool guidance
+ 
+-### Create a new file:
++- Run independent read-only commands together in one response.
++- Edit with `sed -i`, or Ruby scripts that abort if the target string is missing; show `git diff -- <file>` after.
++- Tests: `bin/rails test path/to_test.rb`, `-n "/name/"` for one test.
++- Experiments: `RAILS_ENV=test bin/rails runner '...'`.
++- Don't read framework gem source unless a test fails for a reason you can't explain; prefer a one-line experiment in a runner.
+ 
+ ```bash
+-cat <<'EOF' > newfile.py
+-import numpy as np
+-hello = "ciao"
+-print(hello)
++cat <<'EOF' > newfile.rb
++puts "hello"
+ EOF
+-```
+-
+-### Edit files with sed:
+-
+-```bash
+-# Replace all occurrences
+-sed -i 's/old_string/new_string/g' filename.py
+-
+-# Replace only first occurrence
+-sed -i 's/old_string/new_string/' filename.py
+-
+-# Replace first occurrence on line 1
+-sed -i '1s/old_string/new_string/' filename.py
+-
+-# Replace all occurrences in lines 1-10
+-sed -i '1,10s/old_string/new_string/g' filename.py
+-```
+-
+-### View file content:
+-
+-```bash
+-# View specific lines with numbers
+-nl -ba filename.py | sed -n '10,20p'
+-```
+-
+-### Any other command you want to run
+-
+-```bash
+-anything
++nl -ba file.rb | sed -n '10,20p'
+ ```

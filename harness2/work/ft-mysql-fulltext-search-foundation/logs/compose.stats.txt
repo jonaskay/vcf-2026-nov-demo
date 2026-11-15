@@ -1,0 +1,7 @@
+compose
+{"subtype":"success","cost_usd":0.0715003,"turns":15}
+tool calls:
+   4 Edit
+  10 Read
+distinct files read: 10
+audit: clean

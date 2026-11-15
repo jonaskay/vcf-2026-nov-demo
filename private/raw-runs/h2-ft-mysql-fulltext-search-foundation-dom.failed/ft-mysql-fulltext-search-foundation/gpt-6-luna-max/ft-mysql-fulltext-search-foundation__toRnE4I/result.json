@@ -1,0 +1,44 @@
+{
+  "trial": "ft-mysql-fulltext-search-foundation__toRnE4I",
+  "task": "ft-mysql-fulltext-search-foundation",
+  "agent": "harnessed-miniswen",
+  "model": "openai/gpt-6-luna#max",
+  "index": 1,
+  "profile_digest": "73116e4a943eabe1",
+  "task_digest": "733f3240ec405034",
+  "revision": {
+    "commit": "f587d5a44897f3467af2a48c0503aef4eb6acf55",
+    "dirty": true
+  },
+  "lemans_version": "1.6.0",
+  "tags": [
+    "rails",
+    "active-record",
+    "migrations",
+    "raw-sql",
+    "callbacks"
+  ],
+  "metadata": {
+    "category": "full-features"
+  },
+  "phases": [
+    {
+      "name": "environment_setup",
+      "started_at": "2026-11-14T17:28:59.248590Z",
+      "finished_at": "2026-11-14T17:29:07.386820Z"
+    },
+    {
+      "name": "agent",
+      "started_at": "2026-11-14T17:29:07.386848Z",
+      "finished_at": "2026-11-14T17:36:36.996287Z"
+    }
+  ],
+  "outcome": {
+    "name": "agent_error",
+    "scored": false,
+    "detail": "miniswen: the model call failed: Invalid prompt: your prompt was flagged as potentially violating our usage policy. Please try again with a different prompt: https://platform.openai.com/docs/guides/reasoning#advice-on-prompting: {\n  \"error\": {\n    \"message\": \"Invalid prompt: your prompt was flagged as potentially violating our usage policy. Please try again with a different prompt: https://platform.openai.com/docs/guides/reasoning#advice-on-prompting\",\n    \"type\": \"invalid_request_error\",\n    \"param\": null,\n    \"code\": \"invalid_prompt\"\n  }\n}"
+  },
+  "duration": 457.7,
+  "started_at": "2026-11-14T17:28:59Z",
+  "finished_at": "2026-11-14T17:36:36Z"
+}

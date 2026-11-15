@@ -1,0 +1,8 @@
+dom
+{"subtype":"success","cost_usd":0.0796446,"turns":10}
+tool calls:
+   1 Bash
+   2 Edit
+   6 Read
+distinct files read: 6
+audit: clean

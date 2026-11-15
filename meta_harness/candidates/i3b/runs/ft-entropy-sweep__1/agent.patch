@@ -1,0 +1,72 @@
+diff --git a/app/models/card/entropic.rb b/app/models/card/entropic.rb
+index ebaad78..551c1fc 100644
+--- a/app/models/card/entropic.rb
++++ b/app/models/card/entropic.rb
+@@ -3,11 +3,18 @@ module Card::Entropic
+ 
+   included do
+     scope :due_to_be_postponed, -> do
++      now = Time.now
++      earliest_possible_due_at = now - Entropy::AUTO_POSTPONE_PERIODS_IN_SECONDS.min
++
+       active
++        # Use the existing account-leading card index for this cross-account sweep.
++        .where(cards: { account_id: Account.select(:id) })
++        # No valid entropy period is shorter than this conservative lower bound.
++        .where("cards.last_active_at <= ?", earliest_possible_due_at)
+         .joins(board: :account)
+         .left_outer_joins(board: :entropy)
+         .joins("LEFT OUTER JOIN entropies AS account_entropies ON account_entropies.account_id = accounts.id AND account_entropies.container_type = 'Account' AND account_entropies.container_id = accounts.id")
+-        .where("last_active_at <= #{connection.date_subtract('?', 'COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period)')}", Time.now)
++        .where("cards.last_active_at <= #{connection.date_subtract('?', 'COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period)')}", now)
+     end
+ 
+     scope :postponing_soon, -> do
+diff --git a/test/models/card/entropic_test.rb b/test/models/card/entropic_test.rb
+index 848cfa7..7a40db6 100644
+--- a/test/models/card/entropic_test.rb
++++ b/test/models/card/entropic_test.rb
+@@ -59,6 +59,43 @@ class Card::EntropicTest < ActiveSupport::TestCase
+     assert_not cards(:shipping).reload.postponed?
+   end
+ 
++  test "due scope includes the earliest board deadline and excludes later activity" do
++    freeze_time
++
++    entropies(:writebook_board).update! auto_postpone_period: 3.days
++    cards(:logo).update! last_active_at: 3.days.ago
++    cards(:layout).update! last_active_at: 3.days.ago + 1.second
++
++    due_cards = Card.due_to_be_postponed.where(account_id: accounts("37s").id)
++
++    assert due_cards.exists?(cards(:logo).id)
++    assert_not due_cards.exists?(cards(:layout).id)
++  end
++
++  test "due scope includes the earliest account deadline when there is no board override" do
++    freeze_time
++
++    entropies(:writebook_board).destroy
++    entropies("37s_account").update! auto_postpone_period: 3.days
++    cards(:logo).update! last_active_at: 3.days.ago
++    cards(:layout).update! last_active_at: 3.days.ago + 1.second
++
++    due_cards = Card.due_to_be_postponed.where(account_id: accounts("37s").id)
++
++    assert due_cards.exists?(cards(:logo).id)
++    assert_not due_cards.exists?(cards(:layout).id)
++  end
++
++  test "due scope uses the account and last active card index" do
++    skip "SQLite-specific query plan" unless ActiveRecord::Base.connection.adapter_name == "SQLite"
++
++    due_cards = Card.due_to_be_postponed.limit(1000).order(:id)
++    plan = ActiveRecord::Base.connection.execute("EXPLAIN QUERY PLAN #{due_cards.to_sql}").map { |row| row["detail"] }
++
++    assert_match(/SEARCH cards USING INDEX index_cards_on_account_id_and_last_active_at_and_status .*last_active_at</, plan.join("\n"))
++    assert_no_match(/SCAN cards\b/, plan.join("\n"))
++  end
++
+   test "postponing soon scope" do
+     cards(:logo, :shipping).each(&:published!)
+ 

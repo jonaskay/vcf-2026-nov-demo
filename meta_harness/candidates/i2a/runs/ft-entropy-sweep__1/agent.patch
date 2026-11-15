@@ -1,0 +1,226 @@
+diff --git a/app/models/card/entropic.rb b/app/models/card/entropic.rb
+index ebaad78..9ed979e 100644
+--- a/app/models/card/entropic.rb
++++ b/app/models/card/entropic.rb
+@@ -2,33 +2,67 @@ module Card::Entropic
+   extend ActiveSupport::Concern
+ 
+   included do
+-    scope :due_to_be_postponed, -> do
+-      active
+-        .joins(board: :account)
+-        .left_outer_joins(board: :entropy)
+-        .joins("LEFT OUTER JOIN entropies AS account_entropies ON account_entropies.account_id = accounts.id AND account_entropies.container_type = 'Account' AND account_entropies.container_id = accounts.id")
+-        .where("last_active_at <= #{connection.date_subtract('?', 'COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period)')}", Time.now)
+-    end
++    scope :due_to_be_postponed, -> { klass.due_to_be_postponed_for_periods(Time.current, self) }
+ 
+     scope :postponing_soon, -> do
+-      now = Time.now
++      now = Time.current
+       active
+         .joins(board: :account)
+         .left_outer_joins(board: :entropy)
+         .joins("LEFT OUTER JOIN entropies AS account_entropies ON account_entropies.account_id = accounts.id AND account_entropies.container_type = 'Account' AND account_entropies.container_id = accounts.id")
+-        .where("last_active_at > #{connection.date_subtract('?', 'COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period)')}", now)
+-        .where("last_active_at <= #{connection.date_subtract('?', 'COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period) * 0.75')}", now)
++        .where("cards.last_active_at > #{connection.date_subtract('?', 'COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period)')}", now)
++        .where("cards.last_active_at <= #{connection.date_subtract('?', 'COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period) * 0.75')}", now)
+     end
+ 
+     delegate :auto_postpone_period, to: :board
+   end
+ 
+   class_methods do
++    def due_to_be_postponed_for_periods(now, relation = all)
++      entropy_periods
++        .map { |period| due_to_be_postponed_for_period(period, now, relation) }
++        .reduce { |due_cards, cards_for_period| due_cards.or(cards_for_period) } || relation.none
++    end
++
+     def auto_postpone_all_due
+-      due_to_be_postponed.find_each do |card|
+-        card.auto_postpone(user: card.account.system_user)
++      now = Time.current
++      system_users = {}
++
++      entropy_periods.each do |period|
++        due_to_be_postponed_for_period(period, now)
++          .preload(:account, :column, :closure, :not_now, :activity_spike, board: :account)
++          .find_each do |card|
++            system_user = system_users[card.account_id] ||= card.account.system_user
++            card.auto_postpone(user: system_user)
++          end
+       end
+     end
++
++    private
++      def entropy_periods
++        Entropy.distinct.pluck(:auto_postpone_period)
++      end
++
++      def due_to_be_postponed_for_period(period, now, relation = all)
++        cutoff = now - period.seconds
++        board_entropies = Entropy.where(container_type: "Board")
++        board_entropies_for_period = board_entropies.where(auto_postpone_period: period)
++        account_entropies_for_period = Entropy
++          .where(container_type: "Account", auto_postpone_period: period)
++          .where(Entropy.arel_table[:account_id].eq(Entropy.arel_table[:container_id]))
++
++        due_on_board = relation.active
++          .where(board_id: board_entropies_for_period.select(:container_id))
++          .where(account_id: Board.where(id: board_entropies_for_period.select(:container_id)).select(:account_id))
++          .where(last_active_at: ..cutoff)
++
++        due_on_account = relation.active
++          .where(account_id: account_entropies_for_period.select(:container_id))
++          .where.not(board_id: board_entropies.select(:container_id))
++          .where(last_active_at: ..cutoff)
++
++        due_on_board.or(due_on_account)
++      end
+   end
+ 
+   def entropy
+diff --git a/app/models/card/eventable/system_commenter.rb b/app/models/card/eventable/system_commenter.rb
+index 5c7defc..c50d69c 100644
+--- a/app/models/card/eventable/system_commenter.rb
++++ b/app/models/card/eventable/system_commenter.rb
+@@ -10,7 +10,12 @@ class Card::Eventable::SystemCommenter
+   def comment
+     return unless comment_body.present?
+ 
+-    card.comments.create! creator: card.account.system_user, body: comment_body, created_at: event.created_at
++    creator = if event.action == "card_auto_postponed" && event.creator.system? && event.creator.account_id == card.account_id
++      event.creator
++    else
++      card.account.system_user
++    end
++    card.comments.create! creator:, body: comment_body, created_at: event.created_at
+   end
+ 
+   private
+diff --git a/test/models/card/entropic_test.rb b/test/models/card/entropic_test.rb
+index 848cfa7..7259131 100644
+--- a/test/models/card/entropic_test.rb
++++ b/test/models/card/entropic_test.rb
+@@ -79,10 +79,119 @@ class Card::EntropicTest < ActiveSupport::TestCase
+     assert cards(:radio).reload.postponed?
+   end
+ 
++  test "auto postpone all due respects each configured cutoff at its boundary" do
++    freeze_time
++
++    account = accounts("37s")
++    system_user = account.system_user
++    due_cards = []
++    cards_after_cutoff = []
++
++    default_board = account.boards.create!(name: "Entropy default board", creator: users(:david))
++    assert_not Entropy.exists?(container: default_board)
++    default_cutoff = Time.current - account.entropy.auto_postpone_period
++    due_cards << create_active_card(default_board, last_active_at: default_cutoff - 1.second)
++    due_cards << create_active_card(default_board, last_active_at: default_cutoff)
++    cards_after_cutoff << create_active_card(default_board, last_active_at: default_cutoff + 1.second)
++
++    Entropy::AUTO_POSTPONE_PERIODS_IN_SECONDS.each do |period|
++      board = account.boards.create!(name: "Entropy #{period} board", creator: users(:david))
++      board.update!(auto_postpone_period: period)
++      cutoff = Time.current - period.seconds
++
++      due_cards << create_active_card(board, last_active_at: cutoff - 1.second)
++      due_cards << create_active_card(board, last_active_at: cutoff)
++      cards_after_cutoff << create_active_card(board, last_active_at: cutoff + 1.second)
++    end
++
++    assert_equal due_cards.to_set, Card.due_to_be_postponed.to_set
++
++    Card.auto_postpone_all_due
++
++    due_cards.each do |card|
++      assert card.reload.postponed?, "#{card.title} should be postponed at the cutoff"
++      assert_equal system_user, card.postponed_by
++      assert_equal system_user, card.comments.last.creator
++    end
++
++    cards_after_cutoff.each do |card|
++      assert_not card.reload.postponed?, "#{card.title} should not be postponed after the cutoff"
++    end
++  end
++
++  test "auto postpone all due honors each account period on boards without overrides" do
++    freeze_time
++
++    account = accounts("37s")
++
++    Entropy::AUTO_POSTPONE_PERIODS_IN_SECONDS.each do |period|
++      account.entropy.update!(auto_postpone_period: period)
++      board = account.boards.create!(name: "Account entropy #{period} board", creator: users(:david))
++      assert_not Entropy.exists?(container: board)
++      cutoff = Time.current - period.seconds
++
++      due_before_cutoff = create_active_card(board, last_active_at: cutoff - 1.second)
++      due_at_cutoff = create_active_card(board, last_active_at: cutoff)
++      after_cutoff = create_active_card(board, last_active_at: cutoff + 1.second)
++
++      assert_includes Card.due_to_be_postponed, due_before_cutoff
++      assert_includes Card.due_to_be_postponed, due_at_cutoff
++      assert_not_includes Card.due_to_be_postponed, after_cutoff
++
++      Card.auto_postpone_all_due
++
++      assert due_before_cutoff.reload.postponed?
++      assert due_at_cutoff.reload.postponed?
++      assert_not after_cutoff.reload.postponed?
++      after_cutoff.update_columns(last_active_at: Time.current)
++    end
++  end
++
++  test "due cards fall back to the account period after a board override is removed" do
++    freeze_time
++
++    card = cards(:logo)
++    other_card = cards(:radio)
++    card.update_column(:last_active_at, 45.days.ago)
++    other_card.update_column(:last_active_at, 45.days.ago)
++
++    assert_not_includes Card.due_to_be_postponed, card
++    assert_not_includes Card.due_to_be_postponed, other_card
++
++    entropies(:writebook_board).destroy
++    entropies(:miltons_wish_list_board).destroy
++
++    assert_includes Card.due_to_be_postponed, card
++    assert_includes Card.due_to_be_postponed, other_card
++
++    Card.auto_postpone_all_due
++
++    assert card.reload.postponed?
++    assert other_card.reload.postponed?
++  end
++
++  test "due-to-be-postponed query uses the card activity index" do
++    connection = ActiveRecord::Base.connection
++    skip "SQLite-specific query plan assertion" unless connection.adapter_name == "SQLite"
++
++    plan = connection.execute("EXPLAIN QUERY PLAN #{Card.due_to_be_postponed.order(:id).limit(1000).to_sql}")
++    details = plan.map { |row| row.values.join(" ") }
++
++    assert details.any? { |detail| detail.include?("SEARCH cards USING INDEX index_cards_on_account_id_and_last_active_at_and_status") }
++    assert details.none? { |detail| detail.match?(/SCAN cards\b/) }
++  end
++
+   test "postponing_soon scope works properly cross-account" do
+     cards(:logo).update!(last_active_at: entropies(:writebook_board).auto_postpone_period.seconds.ago + 2.days)
+     cards(:radio).update!(last_active_at: entropies(:miltons_wish_list_board).auto_postpone_period.seconds.ago + 2.days)
+ 
+     assert_equal(cards(:logo, :radio).to_set, Card.postponing_soon.to_set)
+   end
++
++  private
++    def create_active_card(board, last_active_at:)
++      card = board.cards.create!(title: "Entropy boundary card", creator: board.creator)
++      card.update_columns(status: "published", last_active_at: last_active_at)
++      card
++    end
+ end

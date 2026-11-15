@@ -1,0 +1,715 @@
+diff --git a/app/assets/stylesheets/cards.css b/app/assets/stylesheets/cards.css
+index 76f08fd..2e6ff5e 100644
+--- a/app/assets/stylesheets/cards.css
++++ b/app/assets/stylesheets/cards.css
+@@ -445,6 +445,21 @@
+     border-block-end: 1px dashed currentcolor;
+   }
+ 
++  /* Stalled indicator
++  /* ------------------------------------------------------------------------ */
++
++  .card__stalled {
++    align-self: flex-start;
++    background-color: var(--color-marker);
++    border-radius: 0.2em;
++    color: var(--color-ink-inverted);
++    flex: 0 0 auto;
++    font-size: var(--text-xx-small);
++    font-weight: 700;
++    padding: 0.25ch 0.75ch;
++    text-transform: uppercase;
++  }
++
+   /* Misc bits
+   /* ------------------------------------------------------------------------ */
+ 
+diff --git a/app/models/card.rb b/app/models/card.rb
+index 57da45c..d7931f6 100644
+--- a/app/models/card.rb
++++ b/app/models/card.rb
+@@ -1,7 +1,7 @@
+ class Card < ApplicationRecord
+-  include Accessible, Assignable, Attachments, Broadcastable, Closeable, Colored, Commentable,
++  include Accessible, ActivitySpike, Assignable, Attachments, Broadcastable, Closeable, Colored, Commentable,
+     Entropic, Eventable, Exportable, Golden, Mentions, Multistep, Pinnable, Postponable, Promptable,
+-    Readable, Searchable, Statuses, Storage::Tracked, Taggable, Triageable, Watchable
++    Readable, Searchable, Stallable, Statuses, Storage::Tracked, Taggable, Triageable, Watchable
+ 
+   belongs_to :account, default: -> { board.account }
+   belongs_to :board
+@@ -28,6 +28,7 @@ class Card < ApplicationRecord
+   scope :indexed_by, ->(index) do
+     case index
+     when "postponing_soon" then postponing_soon
++    when "stalled" then stalled
+     when "closed" then closed
+     when "maybe" then awaiting_triage
+     when "not_now" then postponed.latest
+diff --git a/app/models/card/activity_spike.rb b/app/models/card/activity_spike.rb
+new file mode 100644
+index 0000000..ac0f5dc
+--- /dev/null
++++ b/app/models/card/activity_spike.rb
+@@ -0,0 +1,62 @@
++module Card::ActivitySpike
++  extend ActiveSupport::Concern
++
++  included do
++    scope :activity_spiked, -> { where(Card.activity_spike_condition) }
++  end
++
++  class_methods do
++    def activity_spike_condition
++      comment_window_start = connection.date_subtract(
++        "burst_end.created_at",
++        "(COALESCE(burst_board_entropy.auto_postpone_period, burst_account_entropy.auto_postpone_period, #{Entropy::DEFAULT_AUTO_POSTPONE_PERIOD_IN_DAYS.days.to_i}) / 3)"
++      )
++
++      condition = <<~SQL.squish
++        EXISTS (
++          SELECT 1
++          FROM events AS burst_events
++          WHERE burst_events.account_id = cards.account_id
++            AND burst_events.eventable_type = 'Card'
++            AND burst_events.eventable_id = cards.id
++            AND burst_events.action IN ('card_assigned', 'card_reopened')
++        )
++        OR EXISTS (
++          SELECT 1
++          FROM comments AS burst_end
++          INNER JOIN users AS burst_end_creator
++            ON burst_end_creator.id = burst_end.creator_id
++            AND burst_end_creator.role <> 'system'
++          INNER JOIN cards AS burst_card
++            ON burst_card.id = burst_end.card_id
++          INNER JOIN boards AS burst_board
++            ON burst_board.id = burst_card.board_id
++          LEFT JOIN entropies AS burst_board_entropy
++            ON burst_board_entropy.account_id = burst_card.account_id
++            AND burst_board_entropy.container_type = 'Board'
++            AND burst_board_entropy.container_id = burst_board.id
++          LEFT JOIN entropies AS burst_account_entropy
++            ON burst_account_entropy.account_id = burst_card.account_id
++            AND burst_account_entropy.container_type = 'Account'
++            AND burst_account_entropy.container_id = burst_card.account_id
++          INNER JOIN comments AS burst_comment
++            ON burst_comment.card_id = burst_end.card_id
++            AND burst_comment.created_at BETWEEN #{comment_window_start} AND burst_end.created_at
++          INNER JOIN users AS burst_commenter
++            ON burst_commenter.id = burst_comment.creator_id
++            AND burst_commenter.role <> 'system'
++          WHERE burst_end.card_id = cards.id
++          GROUP BY burst_end.id
++          HAVING COUNT(burst_comment.id) >= 3
++            AND COUNT(DISTINCT burst_comment.creator_id) >= 2
++        )
++      SQL
++
++      "(#{condition})"
++    end
++  end
++
++  def activity_spike?
++    self.class.activity_spiked.where(id: id).exists?
++  end
++end
+diff --git a/app/models/card/stallable.rb b/app/models/card/stallable.rb
+new file mode 100644
+index 0000000..4d60ef1
+--- /dev/null
++++ b/app/models/card/stallable.rb
+@@ -0,0 +1,25 @@
++module Card::Stallable
++  extend ActiveSupport::Concern
++
++  STALL_PERIOD = 2.weeks
++
++  included do
++    scope :stalled, ->(as_of: Time.current) do
++      where(last_active_at: ..(as_of - STALL_PERIOD)).activity_spiked
++    end
++  end
++
++  def stalled?(as_of: Time.current)
++    if last_active_at && last_active_at <= as_of - STALL_PERIOD
++      activity_spike?
++    else
++      false
++    end
++  end
++
++  # Include the time-derived stalled state so fragments expire when the card crosses the two-week threshold.
++  def cache_version
++    version = super
++    "#{version}-#{stalled?}" if version
++  end
++end
+diff --git a/app/models/filter.rb b/app/models/filter.rb
+index 63884ea..ee5f13b 100644
+--- a/app/models/filter.rb
++++ b/app/models/filter.rb
+@@ -84,10 +84,10 @@ class Filter < ApplicationRecord
+     end
+ 
+     def include_closed_cards?
+-      only_closed? || card_ids.present?
++      only_closed? || indexed_by.stalled? || card_ids.present?
+     end
+ 
+     def include_not_now_cards?
+-      indexed_by.not_now? || card_ids.present?
++      indexed_by.not_now? || indexed_by.stalled? || card_ids.present?
+     end
+ end
+diff --git a/app/models/filter/fields.rb b/app/models/filter/fields.rb
+index d2b7ff0..b5cac3f 100644
+--- a/app/models/filter/fields.rb
++++ b/app/models/filter/fields.rb
+@@ -1,7 +1,7 @@
+ module Filter::Fields
+   extend ActiveSupport::Concern
+ 
+-  INDEXES = %w[ all closed not_now postponing_soon golden ]
++  INDEXES = %w[ all closed not_now postponing_soon golden stalled ]
+   SORTED_BY = %w[ newest oldest latest ]
+ 
+   delegate :default_value?, to: :class
+diff --git a/app/views/cards/_card.json.jbuilder b/app/views/cards/_card.json.jbuilder
+index bccf51d..36e79b6 100644
+--- a/app/views/cards/_card.json.jbuilder
++++ b/app/views/cards/_card.json.jbuilder
+@@ -10,6 +10,7 @@ json.cache! card do
+   json.closed card.closed?
+   json.postponed card.postponed?
+   json.golden card.golden?
++  json.stalled card.stalled?
+   json.last_active_at card.last_active_at.utc
+   json.created_at card.created_at.utc
+ 
+diff --git a/app/views/cards/display/common/_stalled.html.erb b/app/views/cards/display/common/_stalled.html.erb
+new file mode 100644
+index 0000000..e3c3568
+--- /dev/null
++++ b/app/views/cards/display/common/_stalled.html.erb
+@@ -0,0 +1 @@
++<%= tag.span "Stalled", class: "card__stalled" if card.stalled? %>
+diff --git a/app/views/cards/display/common/_stamp.html.erb b/app/views/cards/display/common/_stamp.html.erb
+index 86190e0..854cf0e 100644
+--- a/app/views/cards/display/common/_stamp.html.erb
++++ b/app/views/cards/display/common/_stamp.html.erb
+@@ -23,3 +23,5 @@
+     <span class="card__closed-by-line">by <span class="card__closed-by"><%= card.closed_by.familiar_name %></span></span>
+   <% end %>
+ <% end %>
++
++<%= render "cards/display/common/stalled", card: card %>
+diff --git a/app/views/events/_event.html.erb b/app/views/events/_event.html.erb
+index 6037004..d640cf6 100644
+--- a/app/views/events/_event.html.erb
++++ b/app/views/events/_event.html.erb
+@@ -1,4 +1,4 @@
+-<% cache event do %>
++<% cache [ event, event.card.stalled? ] do %>
+   <%# Template Dependency Updated: _layout.html.erb 2026-01-26 %>
+   <% if lookup_context.exists?("events/event/eventable/_#{event.action}") %>
+     <%= render "events/event/eventable/#{event.action}", event: event %>
+diff --git a/app/views/events/event/_layout.html.erb b/app/views/events/event/_layout.html.erb
+index 8b7d2d5..d96a9db 100644
+--- a/app/views/events/event/_layout.html.erb
++++ b/app/views/events/event/_layout.html.erb
+@@ -18,6 +18,8 @@
+       </span>
+     </h4>
+ 
++    <%= render "cards/display/common/stalled", card: card %>
++
+     <% unless event.action.in?(%w[ card_closed card_published card_reopened ]) %>
+       <%= icon_tag event_action_icon(event), class: "event__icon" %>
+     <% end %>
+diff --git a/app/views/notifications/_notification.html.erb b/app/views/notifications/_notification.html.erb
+index 6bed2aa..169206a 100644
+--- a/app/views/notifications/_notification.html.erb
++++ b/app/views/notifications/_notification.html.erb
+@@ -1,9 +1,10 @@
+-<% cache notification do %>
++<% cache [ notification, notification.card.stalled? ] do %>
+   <%# Helper Dependency Updated: avatar_image_tag 2025-12-15 %>
+   <%= notification_tag notification do %>
+     <%= render "notifications/notification/header", notification: notification do %>
+       <%= notification_toggle_read_button(notification, url: notification_reading_path(notification)) %>
+     <% end %>
+     <%= render "notifications/notification/body", notification: notification %>
++    <%= render "cards/display/common/stalled", card: notification.card %>
+   <% end %>
+ <% end %>
+diff --git a/app/views/notifications/_notification.json.jbuilder b/app/views/notifications/_notification.json.jbuilder
+index 2b11165..f7de3f3 100644
+--- a/app/views/notifications/_notification.json.jbuilder
++++ b/app/views/notifications/_notification.json.jbuilder
+@@ -1,4 +1,4 @@
+-json.cache! notification do
++json.cache! [ notification, notification.card.stalled? ] do
+   json.(notification, :id, :unread_count)
+   json.read notification.read?
+   json.read_at notification.read_at&.utc
+@@ -14,6 +14,7 @@ json.cache! notification do
+     json.board_name notification.card.board.name
+     json.closed notification.card.closed?
+     json.postponed notification.card.postponed?
++    json.stalled notification.card.stalled?
+     json.url card_url(notification.card)
+     if notification.card.column
+       json.column notification.card.column, partial: "columns/column", as: :column
+diff --git a/app/views/webhooks/event.json.jbuilder b/app/views/webhooks/event.json.jbuilder
+index 2f4f817..06eb14f 100644
+--- a/app/views/webhooks/event.json.jbuilder
++++ b/app/views/webhooks/event.json.jbuilder
+@@ -1,4 +1,4 @@
+-json.cache! @event do
++json.cache! [ @event, @event.card.stalled? ] do
+   json.(@event, :id, :action)
+   json.created_at @event.created_at.utc
+ 
+diff --git a/docs/api/sections/activities.md b/docs/api/sections/activities.md
+index 33bf1bf..41dd787 100644
+--- a/docs/api/sections/activities.md
++++ b/docs/api/sections/activities.md
+@@ -80,6 +80,7 @@ __Response:__
+       "closed": true,
+       "postponed": false,
+       "golden": false,
++      "stalled": false,
+       "last_active_at": "2026-03-25T15:11:04.000Z",
+       "created_at": "2026-03-25T09:00:00.000Z",
+       "url": "http://app.fizzy.localhost:3006/897362094/cards/42"
+diff --git a/docs/api/sections/cards.md b/docs/api/sections/cards.md
+index 800ed82..f8e147a 100644
+--- a/docs/api/sections/cards.md
++++ b/docs/api/sections/cards.md
+@@ -44,6 +44,7 @@ __Response:__
+     "has_attachments": false,
+     "tags": ["programming"],
+     "golden": false,
++    "stalled": false,
+     "last_active_at": "2025-12-05T19:38:48.553Z",
+     "created_at": "2025-12-05T19:38:48.540Z",
+     "url": "http://app.fizzy.localhost:3006/897362094/cards/4",
+@@ -98,6 +99,7 @@ __Response:__
+   "tags": ["programming"],
+   "closed": false,
+   "golden": false,
++  "stalled": false,
+   "last_active_at": "2025-12-05T19:38:48.553Z",
+   "created_at": "2025-12-05T19:38:48.540Z",
+   "url": "http://app.fizzy.localhost:3006/897362094/cards/4",
+diff --git a/docs/api/sections/notifications.md b/docs/api/sections/notifications.md
+index 6bddff1..9ad1e22 100644
+--- a/docs/api/sections/notifications.md
++++ b/docs/api/sections/notifications.md
+@@ -30,6 +30,7 @@ __Response:__
+       "id": "03f5v9zo9qlcwwpyc0ascnikz",
+       "title": "Plain text mentions",
+       "status": "published",
++      "stalled": false,
+       "url": "http://app.fizzy.localhost:3006/897362094/cards/3"
+     },
+     "url": "http://app.fizzy.localhost:3006/897362094/notifications/03f5va03bpuvkcjemcxl73ho2"
+diff --git a/test/controllers/boards/columns_controller_test.rb b/test/controllers/boards/columns_controller_test.rb
+index 45c3172..48750c8 100644
+--- a/test/controllers/boards/columns_controller_test.rb
++++ b/test/controllers/boards/columns_controller_test.rb
+@@ -10,6 +10,16 @@ class Boards::ColumnsControllerTest < ActionDispatch::IntegrationTest
+     assert_response :success
+   end
+ 
++  test "show marks stalled cards" do
++    card = cards(:logo)
++    card.update_column(:last_active_at, 3.weeks.ago)
++
++    get board_column_path(card.board, card.column)
++
++    assert_response :success
++    assert_select ".card__stalled", text: "Stalled"
++  end
++
+   test "create" do
+     assert_difference -> { boards(:writebook).columns.count }, +1 do
+       post board_columns_path(boards(:writebook)), params: { column: { name: "New Column" } }, as: :turbo_stream
+diff --git a/test/controllers/cards_controller_test.rb b/test/controllers/cards_controller_test.rb
+index 6c8f375..e6a6454 100644
+--- a/test/controllers/cards_controller_test.rb
++++ b/test/controllers/cards_controller_test.rb
+@@ -15,6 +15,32 @@ class CardsControllerTest < ActionDispatch::IntegrationTest
+     assert_response :success
+   end
+ 
++  test "index lists stalled cards and shows their stalled state" do
++    card = cards(:logo)
++    card.update_column(:last_active_at, 3.weeks.ago)
++
++    get cards_path(indexed_by: "stalled")
++
++    assert_response :success
++    assert_select ".card__stalled", text: "Stalled"
++
++    get cards_path(format: :json), params: { indexed_by: "stalled" }
++
++    assert_response :success
++    item = @response.parsed_body.find { |result| result["id"] == card.id }
++    assert_equal true, item["stalled"]
++  end
++
++  test "show marks stalled cards" do
++    card = cards(:logo)
++    card.update_column(:last_active_at, 3.weeks.ago)
++
++    get card_path(card)
++
++    assert_response :success
++    assert_select ".card__stalled", text: "Stalled"
++  end
++
+   test "index as JSON can filter by workflow column id" do
+     get cards_path(format: :json), params: { column_ids: [ columns(:writebook_in_progress).id ] }
+     assert_response :success
+diff --git a/test/controllers/events_controller_test.rb b/test/controllers/events_controller_test.rb
+index 2d22876..34f6174 100644
+--- a/test/controllers/events_controller_test.rb
++++ b/test/controllers/events_controller_test.rb
+@@ -16,6 +16,16 @@ class EventsControllerTest < ActionDispatch::IntegrationTest
+     end
+   end
+ 
++  test "index marks stalled cards" do
++    card = events(:layout_assignment_jz).card
++    card.update_column(:last_active_at, 3.weeks.ago)
++
++    get events_path
++
++    assert_response :success
++    assert_select ".event .card__stalled", text: "Stalled"
++  end
++
+   test "index with a specific timezone" do
+     cookies[:timezone] = "America/New_York"
+ 
+diff --git a/test/controllers/notifications/trays_controller_test.rb b/test/controllers/notifications/trays_controller_test.rb
+index b6efa20..3e458b0 100644
+--- a/test/controllers/notifications/trays_controller_test.rb
++++ b/test/controllers/notifications/trays_controller_test.rb
+@@ -12,6 +12,15 @@ class Notifications::TraysControllerTest < ActionDispatch::IntegrationTest
+     assert_select "div", text: /Layout is broken/
+   end
+ 
++  test "show marks stalled cards" do
++    notifications(:logo_assignment_kevin).card.update_column(:last_active_at, 3.weeks.ago)
++
++    get tray_notifications_path
++
++    assert_response :success
++    assert_select ".card__stalled", text: "Stalled"
++  end
++
+   test "show as JSON" do
+     expected_ids = users(:kevin).notifications.unread.ordered.limit(100).pluck(:id)
+ 
+diff --git a/test/controllers/notifications_controller_test.rb b/test/controllers/notifications_controller_test.rb
+index cf0c9c5..3bb2456 100644
+--- a/test/controllers/notifications_controller_test.rb
++++ b/test/controllers/notifications_controller_test.rb
+@@ -32,6 +32,16 @@ class NotificationsControllerTest < ActionDispatch::IntegrationTest
+     assert_equal card.postponed?, notification.dig("card", "postponed")
+   end
+ 
++  test "notification JSON includes whether its card is stalled" do
++    card = notifications(:logo_assignment_kevin).card
++    card.update_column(:last_active_at, 3.weeks.ago)
++
++    get notifications_path, as: :json
++
++    notification = @response.parsed_body.find { |item| item["id"] == notifications(:logo_assignment_kevin).id }
++    assert_equal true, notification.dig("card", "stalled")
++  end
++
+   test "index as JSON includes an explicit null column for cards awaiting triage" do
+     get notifications_path, as: :json
+ 
+diff --git a/test/controllers/public/boards/columns_controller_test.rb b/test/controllers/public/boards/columns_controller_test.rb
+index d52c8d7..50e35d4 100644
+--- a/test/controllers/public/boards/columns_controller_test.rb
++++ b/test/controllers/public/boards/columns_controller_test.rb
+@@ -5,6 +5,16 @@ class Public::Boards::ColumnsControllerTest < ActionDispatch::IntegrationTest
+     boards(:writebook).publish
+   end
+ 
++  test "show marks stalled cards in public previews" do
++    card = cards(:logo)
++    card.update_column(:last_active_at, 3.weeks.ago)
++
++    get public_board_column_path(card.board.publication.key, card.column)
++
++    assert_response :success
++    assert_select ".card__stalled", text: "Stalled"
++  end
++
+   test "show" do
+     column = columns(:writebook_in_progress)
+     get public_board_column_path(boards(:writebook).publication.key, column)
+diff --git a/test/controllers/public/cards_controller_test.rb b/test/controllers/public/cards_controller_test.rb
+index 8b3b9e0..29c3246 100644
+--- a/test/controllers/public/cards_controller_test.rb
++++ b/test/controllers/public/cards_controller_test.rb
+@@ -13,6 +13,15 @@ class Public::CardsControllerTest < ActionDispatch::IntegrationTest
+     assert_response :success
+   end
+ 
++  test "show marks stalled cards" do
++    @card.update_column(:last_active_at, 3.weeks.ago)
++
++    get public_board_card_path(@board.publication.key, @card)
++
++    assert_response :success
++    assert_select ".card__stalled", text: "Stalled"
++  end
++
+   test "not found if the board is not published" do
+     @board.unpublish
+     get public_board_card_path(@board.publication.key, @card)
+diff --git a/test/models/card/activity_spike_test.rb b/test/models/card/activity_spike_test.rb
+new file mode 100644
+index 0000000..fba6994
+--- /dev/null
++++ b/test/models/card/activity_spike_test.rb
+@@ -0,0 +1,88 @@
++require "test_helper"
++
++class Card::ActivitySpikeTest < ActiveSupport::TestCase
++  setup do
++    Current.session = sessions(:david)
++  end
++
++  test "a comment burst requires three comments by two people within a third of the board period" do
++    freeze_time do
++      card = new_card
++      window = card.auto_postpone_period / 3
++
++      comment(card, users(:david), created_at: Time.current - window - 1.second)
++      comment(card, users(:kevin), created_at: Time.current - 1.day)
++      comment(card, users(:david), created_at: Time.current)
++
++      assert_not card.activity_spike?, "comments just outside the window should not count"
++
++      card.comments.last.destroy!
++      comment(card, users(:david), created_at: Time.current - 1.second)
++
++      assert card.activity_spike?, "three comments at the window boundary by two people should count"
++    end
++  end
++
++  test "comment bursts require both three comments and two different people" do
++    freeze_time do
++      card = new_card
++      comment(card, users(:david), created_at: Time.current - 2.hours)
++      comment(card, users(:kevin), created_at: Time.current - 1.hour)
++
++      assert_not card.activity_spike?
++
++      comment(card, users(:david), created_at: Time.current)
++      assert card.activity_spike?
++
++      same_person_card = new_card
++      3.times { comment(same_person_card, users(:david), created_at: Time.current) }
++      assert_not same_person_card.activity_spike?
++    end
++  end
++
++  test "system comments do not count as people in a comment burst" do
++    freeze_time do
++      card = new_card
++      system_user = accounts("37s").system_user
++
++      3.times { comment(card, system_user, created_at: Time.current) }
++
++      assert_not card.activity_spike?
++    end
++  end
++
++  test "the account auto-close period is used when the board has no override" do
++    freeze_time do
++      entropies(:writebook_board).destroy
++      card = new_card
++      window = card.auto_postpone_period / 3
++
++      comment(card, users(:david), created_at: Time.current - window)
++      comment(card, users(:kevin), created_at: Time.current - window / 2)
++      comment(card, users(:david), created_at: Time.current)
++
++      assert card.activity_spike?
++    end
++  end
++
++  test "assigning someone or reopening the card causes a burst" do
++    card = new_card
++
++    card.toggle_assignment(users(:kevin))
++    assert card.activity_spike?
++
++    reopened_card = new_card
++    reopened_card.close
++    reopened_card.reopen
++    assert reopened_card.activity_spike?
++  end
++
++  private
++    def new_card
++      boards(:writebook).cards.create!(title: "A card with recent activity", creator: users(:david), status: :published)
++    end
++
++    def comment(card, creator, created_at:)
++      card.comments.create!(body: "Activity", creator: creator, created_at: created_at)
++    end
++end
+diff --git a/test/models/card/stallable_test.rb b/test/models/card/stallable_test.rb
+new file mode 100644
+index 0000000..9b0e5bf
+--- /dev/null
++++ b/test/models/card/stallable_test.rb
+@@ -0,0 +1,95 @@
++require "test_helper"
++
++class Card::StallableTest < ActiveSupport::TestCase
++  setup do
++    Current.session = sessions(:david)
++  end
++
++  test "a card with a burst stalls after two weeks without activity" do
++    freeze_time do
++      card = card_with_comment_burst
++      as_of = Time.current
++
++      card.update_column(:last_active_at, as_of - Card::Stallable::STALL_PERIOD + 1.second)
++      assert_not card.reload.stalled?(as_of: as_of)
++
++      card.update_column(:last_active_at, as_of - Card::Stallable::STALL_PERIOD)
++      card.reload
++
++      assert card.stalled?(as_of: as_of)
++      assert_includes Card.stalled(as_of: as_of), card
++    end
++  end
++
++  test "a burst is not stalled while there is no burst" do
++    freeze_time do
++      card = new_card
++      card.update_column(:last_active_at, 3.weeks.ago)
++
++      assert_not card.reload.stalled?
++      assert_not_includes Card.stalled, card
++    end
++  end
++
++  test "any new activity resets a stalled card" do
++    freeze_time do
++      card = card_with_comment_burst
++      card.update_column(:last_active_at, 3.weeks.ago)
++      assert card.reload.stalled?
++
++      comment(card, users(:kevin))
++
++      assert_not card.reload.stalled?
++      assert card.activity_spike?
++
++      travel 2.weeks
++
++      assert card.stalled?, "the reset activity should itself become stale after another two weeks"
++    end
++  end
++
++  test "the cache version changes when the card becomes stalled" do
++    freeze_time do
++      card = card_with_comment_burst
++      card.update_column(:last_active_at, 2.weeks.ago + 1.second)
++      card.reload
++      cache_version = card.cache_version
++
++      travel 1.second
++
++      assert card.stalled?
++      assert_not_equal cache_version, card.cache_version
++    end
++  end
++
++  test "the stalled scope and predicate agree across accounts" do
++    freeze_time do
++      card = card_with_comment_burst
++      other_card = cards(:radio)
++      card.update_column(:last_active_at, 3.weeks.ago)
++      other_card.events.create!(action: "card_assigned", board: other_card.board, creator: users(:mike), account: other_card.account)
++      other_card.update_column(:last_active_at, 3.weeks.ago)
++
++      assert_equal Card.stalled.to_a.to_set, Card.all.select(&:stalled?).to_set
++      assert_includes Card.stalled, other_card
++      assert_includes Card.stalled, card
++    end
++  end
++
++  private
++    def card_with_comment_burst
++      card = new_card
++      comment(card, users(:david))
++      comment(card, users(:kevin))
++      comment(card, users(:david))
++      card
++    end
++
++    def new_card
++      boards(:writebook).cards.create!(title: "A card with recent activity", creator: users(:david), status: :published)
++    end
++
++    def comment(card, creator)
++      card.comments.create!(body: "Activity", creator: creator)
++    end
++end
+diff --git a/test/models/filter_test.rb b/test/models/filter_test.rb
+index 9b48413..cb3af41 100644
+--- a/test/models/filter_test.rb
++++ b/test/models/filter_test.rb
+@@ -34,6 +34,26 @@ class FilterTest < ActiveSupport::TestCase
+     assert_equal [ cards(:logo), cards(:layout) ], filter.cards
+   end
+ 
++  test "stalled index includes stalled cards regardless of closed or postponed status" do
++    card = boards(:writebook).cards.create!(title: "Stalled", creator: users(:david), status: :published)
++    card.comments.create!(body: "First", creator: users(:david))
++    card.comments.create!(body: "Second", creator: users(:kevin))
++    card.comments.create!(body: "Third", creator: users(:david))
++    card.close
++    card.update_column(:last_active_at, 3.weeks.ago)
++
++    postponed_card = boards(:writebook).cards.create!(title: "Postponed and stalled", creator: users(:david), status: :published)
++    postponed_card.comments.create!(body: "First", creator: users(:david))
++    postponed_card.comments.create!(body: "Second", creator: users(:kevin))
++    postponed_card.comments.create!(body: "Third", creator: users(:david))
++    postponed_card.postpone
++    postponed_card.update_column(:last_active_at, 3.weeks.ago)
++
++    filter = users(:david).filters.new indexed_by: "stalled"
++
++    assert_equal [ card, postponed_card ].to_set, filter.cards.to_a.to_set
++  end
++
+   test "can't see cards in boards that aren't accessible" do
+     boards(:writebook).update! all_access: false
+     boards(:writebook).accesses.revoke_from users(:david)
+@@ -170,6 +190,10 @@ class FilterTest < ActiveSupport::TestCase
+     assert_includes filter.cards, cards(:shipping)
+   end
+ 
++  test "stalled is an available index" do
++    assert_includes Filter::INDEXES, "stalled"
++  end
++
+   test "check if a filter is used" do
+     assert users(:david).filters.new(creator_ids: [ users(:david).id ]).used?
+     assert_not users(:david).filters.new.used?

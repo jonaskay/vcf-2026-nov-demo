@@ -1,0 +1,14 @@
+<edits>
+component: skills/card-derived-state/SKILL.md (new on-demand skill) and its trigger line in system.md
+candidates: dom, adopted
+change: Added a checklist skill for derived card state, with a trigger line in system.md. It lists the places to touch: the new index value in both `Card.indexed_by` and `Filter::Fields::INDEXES`, both schema files, export/import `RecordSet` strictness, display surfaces, and fragment-cache keys for a purely time-based state. It also lists consistency checks. The adopted copy trims the run-history wording and the `context/task.md` reference from the dom copy.
+observed: The dom rollout finished in 111 steps and 3642s. The 3 base runs took 53–67 steps and 1175–1677s, so the skill came with a much slower run. I did not open the trajectories to confirm that the agent read the skill or acted on its checklist items. No execution shows the skill changing the patch's content. The composer's evidence is that nothing failed, which is not a contrast. I did not check the adopted harness's own rollout.
+verdict: confounded
+component: system.md workflow rewrite
+candidates: inv
+change: Replaced the five numbered workflow steps with longer prose. It restates the request as behaviors, caps exploration at about 15 steps, writes tests first, warns to `git diff` after sed edits, runs the narrow tests then the full suite and rubocop, and reviews `git status` before submitting.
+observed: The inv rollout finished in 90 steps and 3264s, slower than all 3 base runs (53–67 steps). Nothing shows it improved the patch, and the exploration cap did not shorten the run. The change was dropped, so it never ran as part of an adopted harness.
+verdict: confounded
+</edits>
+
+NO_ENTRY

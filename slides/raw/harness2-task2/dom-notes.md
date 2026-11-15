@@ -1,0 +1,15 @@
+I added one skill, `skills/rails-query-perf-change/SKILL.md`, and one trigger line in `system.md`. I could not run Bash, so I read only the four `agent.patch` files. I did not open the trajectories, `result.json` or `steps.tsv`. Every workspace fact in the skill comes from those patches. The one exception is `Entropy::AUTO_POSTPONE_PERIODS_IN_SECONDS`, which I took from r1 and did not check against the repo. The skill is written as a checklist, so the agent can re-check facts against the repo.
+
+What I saw in the patches, and what each part of the skill answers:
+
+- **Different fixes, same file.** All four runs changed `Card::Entropic`, but each rewrote it differently:
+  - r1 added a prefilter on the minimum period.
+  - r2 grouped by account and board cutoffs.
+  - r3 iterated per board.
+  - r4 grouped boards by period.
+  - The skill names `app/models/card/entropic.rb`, `app/models/board/entropic.rb` and `test/models/card/entropic_test.rb` as the places to work. It also states the rule that the cutoff comes from `COALESCE(board period, account period)`.
+- **A likely regression in r4.** Its loop only used `board.entropy&.auto_postpone_period`, so boards without their own entropy row would be skipped. The skill says to keep the account fallback and to test a board whose period is shorter than the account's.
+- **Schema files.** r1 and r3 updated `db/schema.rb`, `db/schema_sqlite.rb` and `define(version:)`. r2 and r4 added no index. The skill lists both schema dumps as required for any migration.
+- **Index choice.** r3 added a board-first index. r1 added `status, last_active_at`. The cards table already has an `account_id, last_active_at, status` index. The skill tells the agent to check the dump for existing indexes before adding one.
+- **Verification.** Only r3 checked the plan with `EXPLAIN QUERY PLAN`. The skill makes that a step.
+- **Unqualified column.** The original scope used an unqualified `last_active_at` alongside joins. The skill says to qualify it as `cards.last_active_at`.

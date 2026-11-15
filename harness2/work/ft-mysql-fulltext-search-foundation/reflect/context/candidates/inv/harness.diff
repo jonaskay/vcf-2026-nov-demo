@@ -1,0 +1,26 @@
+diff -ruN -x .keep base_harness/tool_guidance.md candidates/inv/harness/tool_guidance.md
+--- base_harness/tool_guidance.md	2026-11-14 20:23:05
++++ candidates/inv/harness/tool_guidance.md	2026-11-14 20:23:05
+@@ -3,12 +3,18 @@
+ ### Create a new file:
+ 
+ ```bash
+-cat <<'EOF' > newfile.py
+-import numpy as np
+-hello = "ciao"
+-print(hello)
++cat <<'EOF' > newfile.rb
++puts "ciao"
+ EOF
+ ```
++
++### No Python in this sandbox
++
++`python3` is not installed (every earlier run lost steps to `python3 - <<PY` edits that exited 1). Do multi-line edits with `ruby`, `sed`, or a full `cat <<'EOF'` rewrite of the file. After any scripted edit, `git diff` the file to confirm it applied.
++
++### Tests
++
++Run the one test file you wrote or touched first (`bin/rails test path/to/test.rb`), read the failure output fully, and fix the cause rather than rewriting the test file wholesale. Run the full `bin/rails test` and `bin/rubocop` on changed files once before submitting, then check `git status --short` for stray files.
+ 
+ ### Edit files with sed:
+ 

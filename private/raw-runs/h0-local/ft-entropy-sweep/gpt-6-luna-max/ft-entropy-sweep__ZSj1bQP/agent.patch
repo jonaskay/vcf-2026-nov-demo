@@ -1,0 +1,93 @@
+diff --git a/app/models/account.rb b/app/models/account.rb
+index 687a46a..56f40eb 100644
+--- a/app/models/account.rb
++++ b/app/models/account.rb
+@@ -3,6 +3,7 @@ class Account < ApplicationRecord
+ 
+   has_one :join_code, dependent: :destroy
+   has_many :users, dependent: :destroy
++  has_one :system_user, -> { where(role: :system) }, class_name: "User"
+   has_many :boards, dependent: :destroy
+   has_many :cards, dependent: :destroy
+   has_many :webhooks, dependent: :destroy
+@@ -38,7 +39,11 @@ class Account < ApplicationRecord
+   end
+ 
+   def system_user
+-    users.find_by!(role: :system)
++    if association(:system_user).loaded?
++      association(:system_user).target || users.find_by!(role: :system)
++    else
++      users.find_by!(role: :system)
++    end
+   end
+ 
+   def active?
+diff --git a/app/models/card/entropic.rb b/app/models/card/entropic.rb
+index ebaad78..f1e0d31 100644
+--- a/app/models/card/entropic.rb
++++ b/app/models/card/entropic.rb
+@@ -1,6 +1,8 @@
+ module Card::Entropic
+   extend ActiveSupport::Concern
+ 
++  BOARD_ID_BATCH_SIZE = 10_000
++
+   included do
+     scope :due_to_be_postponed, -> do
+       active
+@@ -25,8 +27,28 @@ module Card::Entropic
+ 
+   class_methods do
+     def auto_postpone_all_due
+-      due_to_be_postponed.find_each do |card|
+-        card.auto_postpone(user: card.account.system_user)
++      # Resolve periods once per board so the due-card queries can use the last_active_at index.
++      now = Time.now
++      boards_by_account_and_period = Hash.new { |groups, key| groups[key] = [] }
++
++      Board.includes(:entropy, account: :entropy).find_each do |board|
++        if period = board.entropy&.auto_postpone_period
++          boards_by_account_and_period[[ board.account_id, period ]] << board.id
++        end
++      end
++
++      boards_by_account_and_period.each do |(account_id, period), board_ids|
++        board_ids.each_slice(BOARD_ID_BATCH_SIZE) do |board_ids_batch|
++          due_cards = Card.active
++            .where(account_id: account_id, board_id: board_ids_batch)
++            .where("last_active_at <= #{connection.date_subtract('?', '?')}", now, period)
++            .preload(:board, :creator, :closure, :not_now, :activity_spike, account: :system_user)
++
++          # Use the indexed timestamp with id as a tie-breaker; each processed card stops matching Card.active.
++          due_cards.find_each(cursor: [ :last_active_at, :id ], order: [ :asc, :asc ]) do |card|
++            card.auto_postpone(user: card.account.system_user)
++          end
++        end
+       end
+     end
+   end
+diff --git a/test/models/card/entropic_test.rb b/test/models/card/entropic_test.rb
+index 848cfa7..b4fa2f7 100644
+--- a/test/models/card/entropic_test.rb
++++ b/test/models/card/entropic_test.rb
+@@ -47,6 +47,19 @@ class Card::EntropicTest < ActiveSupport::TestCase
+     assert_not cards(:shipping).reload.postponed?
+   end
+ 
++  test "auto postpone all due uses indexed batches and preloads system users" do
++    last_active_at = 1.year.ago
++    cards(:logo, :layout, :radio).each { |card| card.update!(last_active_at:) }
++
++    assert_no_queries_match(/FROM ["`]cards["`].*JOIN ["`]boards["`]/) do
++      assert_queries_match(/FROM ["`]users["`].*role.*account_id/, count: 2) do
++        Card.auto_postpone_all_due
++      end
++    end
++
++    assert cards(:logo, :layout, :radio).all? { |card| card.reload.postponed? }
++  end
++
+   test "auto postpone all due using entropy defined at the board level" do
+     cards(:logo).update!(last_active_at: 1.day.ago - entropies(:writebook_board).auto_postpone_period)
+     cards(:shipping).update!(last_active_at: 1.day.from_now - entropies(:writebook_board).auto_postpone_period)

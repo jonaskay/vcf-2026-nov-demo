@@ -1,0 +1,75 @@
+diff --git a/test/controllers/searches_controller_test.rb b/test/controllers/searches_controller_test.rb
+new file mode 100644
+index 0000000..c4dca9a
+--- /dev/null
++++ b/test/controllers/searches_controller_test.rb
+@@ -0,0 +1,69 @@
++require "test_helper"
++
++class SearchesControllerTest < ActionDispatch::IntegrationTest
++  setup do
++    sign_in_as :kevin
++  end
++
++  test "search finds published cards by title, description, or comment, newest first, and marks matches" do
++    now = Time.current
++    title_match = create_search_card(title: "Needle in a title", created_at: 3.minutes.ago(now))
++    description_match = create_search_card(title: "Description match", description: "A needle in the description", created_at: 2.minutes.ago(now))
++    comment_match = create_search_card(title: "Comment match", created_at: 1.minute.ago(now))
++    Current.set(user: users(:kevin)) do
++      comment_match.comments.create!(creator: users(:kevin), body: "A needle in a comment")
++    end
++
++    get "/search", params: { q: "needle" }
++
++    assert_response :success
++    assert_select ".search-result", count: 3
++    assert_equal [ comment_match.title, description_match.title, title_match.title ],
++      css_select(".search-result__title").map(&:text)
++    assert_select ".search-result mark", count: 3
++  end
++
++  test "search only returns cards on boards the user can currently access and excludes drafts and their comments" do
++    now = Time.current
++    accessible_card = create_search_card(title: "Needle on an accessible board", created_at: now)
++    inaccessible_card = create_search_card(title: "Needle on an inaccessible board", board: boards(:private), created_at: now)
++    boards(:private).accesses.revoke_from(users(:kevin))
++
++    draft = create_search_card(title: "A draft without the search term", created_at: now)
++    Current.set(user: users(:kevin)) do
++      draft.comments.create!(creator: users(:kevin), body: "Needle only in a draft comment")
++    end
++    draft.update!(status: :drafted)
++
++    get "/search", params: { q: "needle" }
++
++    assert_response :success
++    assert_select ".search-result", count: 1
++    assert_select ".search-result__title", text: accessible_card.title
++    assert_no_match inaccessible_card.title, response.body
++    assert_no_match "Needle only in a draft comment", response.body
++  end
++
++  test "blank searches do not list every card" do
++    create_search_card(title: "Needle in a title")
++
++    get "/search"
++
++    assert_response :success
++    assert_select ".search-result", count: 0
++  end
++
++  private
++    def create_search_card(title:, board: boards(:writebook), description: nil, created_at: Time.current)
++      Current.set(user: users(:kevin)) do
++        board.cards.create!(
++          creator: users(:kevin),
++          title: title,
++          description: description,
++          status: :published,
++          created_at: created_at,
++          updated_at: created_at,
++          last_active_at: created_at)
++      end
++    end
++end

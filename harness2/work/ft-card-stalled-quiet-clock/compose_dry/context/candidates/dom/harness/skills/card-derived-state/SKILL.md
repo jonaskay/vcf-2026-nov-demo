@@ -1,0 +1,21 @@
+---
+name: card-derived-state
+description: Checklist for adding a stored/derived state, badge and index filter to Fizzy cards.
+---
+Operation: extend Card with a concern (derive state from events/comments/time), query it via a scope + matching predicate, render it everywhere cards appear. Re-read `context/task.md`-style request wording for names, thresholds and exact index value; do not rename them.
+
+Workspace facts (seen in earlier runs on a "stalled card" request; verify with grep before relying):
+- Card behavior lives in concerns `app/models/card/*.rb` (e.g. closeable, assignable, eventable, golden, postponable); add one and register it in the `include` list in `app/models/card.rb`.
+- `Card.indexed_by` scope (card.rb, `case index`) AND `Filter::Fields::INDEXES` (app/models/filter/fields.rb) must both gain a new index value; that file also has index display labels.
+- Hooks: `Card::Eventable#event_was_created` (assigned/reopened events, calls `touch_last_active_at`) and `Comment::Eventable#event_was_created`/`track_creation` (comment created). Hook there rather than adding callbacks elsewhere. Exclude system-user comments (`users(:system)` in fixtures) when counting people/comments; `comments.by_user` exists.
+- Board auto-close period is `auto_postpone_period` (seconds) on the board.
+- Schema: keep BOTH `db/schema.rb` and `db/schema_sqlite.rb` in sync with a new migration (same version, column added in both). Run `bin/rails db:test:prepare` after.
+- Export/import: `Account::DataTransfer::RecordSet` requires every `Card.column_names` key in archives, so a new cards column makes older archives fail `check`. One run handled this (optional attributes in Manifest/RecordSet + a test); the others missed it. Check it.
+- Card display surfaces: `cards/display/_preview`, `_public_preview`, `public/cards/show`, `cards/_container` (permalink), `cards_helper#card_article_tag`, JSON `cards/_card.json.jbuilder` (add a boolean key), `notifications/_notification.json.jbuilder`, `my/menus/_shortcuts` (list links). Look for others with `grep -rn golden app/views app/helpers`: golden is the closest existing analogue to mimic.
+- Fragment caches (`cached: true`, `cache card`, `json.cache!`) key on updated_at, so a purely time-based state (becomes true with no write) serves stale HTML/JSON. Include the state in the cache key (`[card, card.stalled?]`) or override `cache_version` in the concern; apply to every cached surface above, including the turbo_stream previews.
+
+Consistency checks before finishing:
+1. Scope and predicate agree at the boundary (>= vs >) and on nil columns; test both at exactly the threshold.
+2. Any activity resets the state: confirm which writes bump `last_active_at` and that the state is derived from it, not stored separately and left stale.
+3. Unassign/close/system comments must not trigger the "burst"-like event unless requested.
+4. Tests: model test `test/models/card/<concern>_test.rb` (use `travel_to`, `Current.session = sessions(:david)`), controller test in `test/controllers/cards_controller_test.rb` for index HTML + JSON + card page. Fixtures are in test/fixtures.

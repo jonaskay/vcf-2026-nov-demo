@@ -1,0 +1,244 @@
+diff --git a/app/models/card/entropic.rb b/app/models/card/entropic.rb
+index ebaad78..92b9693 100644
+--- a/app/models/card/entropic.rb
++++ b/app/models/card/entropic.rb
+@@ -2,13 +2,7 @@ module Card::Entropic
+   extend ActiveSupport::Concern
+ 
+   included do
+-    scope :due_to_be_postponed, -> do
+-      active
+-        .joins(board: :account)
+-        .left_outer_joins(board: :entropy)
+-        .joins("LEFT OUTER JOIN entropies AS account_entropies ON account_entropies.account_id = accounts.id AND account_entropies.container_type = 'Account' AND account_entropies.container_id = accounts.id")
+-        .where("last_active_at <= #{connection.date_subtract('?', 'COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period)')}", Time.now)
+-    end
++    scope :due_to_be_postponed, -> { Card.due_to_be_postponed_relation(self) }
+ 
+     scope :postponing_soon, -> do
+       now = Time.now
+@@ -24,11 +18,63 @@ module Card::Entropic
+   end
+ 
+   class_methods do
++    def due_to_be_postponed_relation(relation = all, now: Time.current)
++      queries = due_to_be_postponed_queries(relation, now)
++      due_to_be_postponed_relation_from_queries(relation, queries)
++    end
++
+     def auto_postpone_all_due
+-      due_to_be_postponed.find_each do |card|
+-        card.auto_postpone(user: card.account.system_user)
++      now = Time.current
++      queries = due_to_be_postponed_queries(all, now)
++      due_cards_relation = due_to_be_postponed_relation_from_queries(all, queries)
++      system_users = {}
++
++      queries.each do |due_cards|
++        due_cards.preload(:account).find_each do |card|
++          system_user = system_users[card.account_id] ||= card.account.system_user
++          card.auto_postpone(user: system_user)
++        end
+       end
++
++      due_cards_relation
+     end
++
++    private
++      def due_to_be_postponed_relation_from_queries(relation, queries)
++        if queries.any?
++          ids_sql = queries.map { |query| query.reselect(:id).to_sql }.join(" UNION ALL ")
++          relation.where("cards.id IN (#{ids_sql})")
++        else
++          relation.none
++        end
++      end
++
++      def due_to_be_postponed_queries(relation, now)
++        board_entropies = Entropy.where(container_type: "Board")
++        account_entropies = Entropy.where(container_type: "Account")
++          .where("entropies.account_id = entropies.container_id")
++        periods = board_entropies.distinct.pluck(:auto_postpone_period) +
++          account_entropies.distinct.pluck(:auto_postpone_period)
++        active_cards = relation.except(:select, :order, :limit, :offset).active
++
++        periods.uniq.flat_map do |period|
++          cutoff = now - period.seconds
++          board_ids = Board.joins(:account)
++            .where(id: board_entropies.where(auto_postpone_period: period).select(:container_id))
++            .select(:id)
++          account_ids = account_entropies.where(auto_postpone_period: period).select(:container_id)
++          default_board_ids = Board.joins(:account)
++            .where(account_id: account_ids)
++            .where.not(id: board_entropies.select(:container_id))
++            .select(:id)
++
++          [ board_ids, default_board_ids ].map do |ids|
++            active_cards
++              .where(board_id: ids)
++              .where("cards.last_active_at <= ?", cutoff)
++          end
++        end
++      end
+   end
+ 
+   def entropy
+diff --git a/db/migrate/20261114180000_add_entropy_due_lookup_index_to_cards.rb b/db/migrate/20261114180000_add_entropy_due_lookup_index_to_cards.rb
+new file mode 100644
+index 0000000..46e770a
+--- /dev/null
++++ b/db/migrate/20261114180000_add_entropy_due_lookup_index_to_cards.rb
+@@ -0,0 +1,5 @@
++class AddEntropyDueLookupIndexToCards < ActiveRecord::Migration[8.2]
++  def change
++    add_index :cards, [ :board_id, :status, :last_active_at ]
++  end
++end
+diff --git a/db/schema.rb b/db/schema.rb
+index 99e6be9..04d2c95 100644
+--- a/db/schema.rb
++++ b/db/schema.rb
+@@ -10,7 +10,7 @@
+ #
+ # It's strongly recommended that you check this file into your version control system.
+ 
+-ActiveRecord::Schema[8.2].define(version: 2026_02_18_120000) do
++ActiveRecord::Schema[8.2].define(version: 2026_11_14_180000) do
+   create_table "accesses", id: :uuid, charset: "utf8mb4", collation: "utf8mb4_0900_ai_ci", force: :cascade do |t|
+     t.datetime "accessed_at"
+     t.uuid "account_id", null: false
+@@ -229,6 +229,7 @@ ActiveRecord::Schema[8.2].define(version: 2026_02_18_120000) do
+     t.datetime "updated_at", null: false
+     t.index ["account_id", "last_active_at", "status"], name: "index_cards_on_account_id_and_last_active_at_and_status"
+     t.index ["account_id", "number"], name: "index_cards_on_account_id_and_number", unique: true
++    t.index ["board_id", "status", "last_active_at"], name: "index_cards_on_board_id_and_status_and_last_active_at"
+     t.index ["board_id"], name: "index_cards_on_board_id"
+     t.index ["column_id"], name: "index_cards_on_column_id"
+   end
+diff --git a/db/schema_sqlite.rb b/db/schema_sqlite.rb
+index 00125d1..cdbca5b 100644
+--- a/db/schema_sqlite.rb
++++ b/db/schema_sqlite.rb
+@@ -10,7 +10,7 @@
+ #
+ # It's strongly recommended that you check this file into your version control system.
+ 
+-ActiveRecord::Schema[8.2].define(version: 2026_02_18_120000) do
++ActiveRecord::Schema[8.2].define(version: 2026_11_14_180000) do
+   create_table "accesses", id: :uuid, force: :cascade do |t|
+     t.datetime "accessed_at"
+     t.uuid "account_id", null: false
+@@ -229,6 +229,7 @@ ActiveRecord::Schema[8.2].define(version: 2026_02_18_120000) do
+     t.datetime "updated_at", null: false
+     t.index ["account_id", "last_active_at", "status"], name: "index_cards_on_account_id_and_last_active_at_and_status"
+     t.index ["account_id", "number"], name: "index_cards_on_account_id_and_number", unique: true
++    t.index ["board_id", "status", "last_active_at"], name: "index_cards_on_board_id_and_status_and_last_active_at"
+     t.index ["board_id"], name: "index_cards_on_board_id"
+     t.index ["column_id"], name: "index_cards_on_column_id"
+   end
+diff --git a/test/models/card/entropic_test.rb b/test/models/card/entropic_test.rb
+index 848cfa7..04015a2 100644
+--- a/test/models/card/entropic_test.rb
++++ b/test/models/card/entropic_test.rb
+@@ -85,4 +85,101 @@ class Card::EntropicTest < ActiveSupport::TestCase
+ 
+     assert_equal(cards(:logo, :radio).to_set, Card.postponing_soon.to_set)
+   end
++
++  test "due scope uses inclusive cutoffs for every board and account entropy period" do
++    freeze_time do
++      account = accounts("37s")
++      account_entropy = entropies("37s_account")
++
++      create_card = ->(board, title, last_active_at) do
++        board.cards.create!(creator: users(:david), title: title, status: :published).tap do |card|
++          card.update!(last_active_at: last_active_at)
++        end
++      end
++
++      Entropy::AUTO_POSTPONE_PERIODS_IN_SECONDS.each do |period|
++        board = account.boards.create!(name: "Board override #{period}", creator: users(:david), all_access: true)
++        board.update! auto_postpone_period: period
++
++        due = create_card.call(board, "Due at board cutoff", Time.current - period.seconds)
++        recent = create_card.call(board, "Active after board cutoff", Time.current - period.seconds + 1.second)
++
++        assert_equal [ due.id ], Card.due_to_be_postponed.where(board_id: board.id).ids
++        assert_not_includes Card.due_to_be_postponed, recent
++      end
++
++      Entropy::AUTO_POSTPONE_PERIODS_IN_SECONDS.each do |period|
++        account_entropy.update! auto_postpone_period: period
++        board = account.boards.create!(name: "Account default #{period}", creator: users(:david), all_access: true)
++        Entropy.where(container_type: "Board", container_id: board.id).delete_all
++
++        due = create_card.call(board, "Due at account cutoff", Time.current - period.seconds)
++        recent = create_card.call(board, "Active after account cutoff", Time.current - period.seconds + 1.second)
++
++        assert_equal [ due.id ], Card.due_to_be_postponed.where(board_id: board.id).ids
++        assert_not_includes Card.due_to_be_postponed, recent
++      end
++    end
++  end
++
++  test "due scope includes only open published cards that are not postponed" do
++    freeze_time do
++      due = cards(:logo)
++      closed = cards(:shipping)
++      postponed = cards(:text)
++      draft = cards(:unfinished_thoughts)
++
++      [ due, closed, postponed, draft ].each do |card|
++        card.update! last_active_at: 120.days.ago
++      end
++      postponed.postpone(user: users(:david))
++      postponed.update! last_active_at: 120.days.ago
++
++      due_ids = Card.due_to_be_postponed.where(id: [ due, closed, postponed, draft ]).ids
++
++      assert_kind_of ActiveRecord::Relation, Card.due_to_be_postponed
++      assert_equal [ due.id ], due_ids
++      assert_equal [ due.id ], Card.where(id: due.id).due_to_be_postponed.ids
++    end
++  end
++
++  test "auto postpone all due processes more than one batch and returns a relation" do
++    freeze_time do
++      account = accounts("37s")
++      now = Time.current
++      batch_size = 1_001
++      first_number = Card.where(account: account).maximum(:number).to_i + 1
++
++      Card.insert_all!(Array.new(batch_size) do |index|
++        {
++          id: ActiveRecord::Type::Uuid.generate,
++          account_id: account.id,
++          board_id: boards(:writebook).id,
++          creator_id: users(:david).id,
++          number: first_number + index,
++          title: "Old card #{index}",
++          status: "published",
++          last_active_at: now - 100.days,
++          created_at: now,
++          updated_at: now
++        }
++      end)
++
++      Card.any_instance.expects(:auto_postpone).with(user: account.system_user).times(batch_size)
++      due_cards = Card.auto_postpone_all_due
++
++      assert_kind_of ActiveRecord::Relation, due_cards
++      assert_equal batch_size, due_cards.count
++    end
++  end
++
++  test "due scope uses the board status and activity index on SQLite" do
++    skip "SQLite query plan assertion" unless ActiveRecord::Base.connection.adapter_name == "SQLite"
++
++    plan = ActiveRecord::Base.connection.execute("EXPLAIN QUERY PLAN #{Card.due_to_be_postponed.to_sql}")
++      .map { |row| row["detail"] }
++
++    assert plan.any? { |step| step.include?("index_cards_on_board_id_and_status_and_last_active_at") }, plan.join("\n")
++    assert_not plan.any? { |step| step == "SCAN cards" }, plan.join("\n")
++  end
+ end

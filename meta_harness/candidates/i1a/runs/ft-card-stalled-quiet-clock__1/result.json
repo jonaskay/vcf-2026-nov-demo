@@ -1,0 +1,9 @@
+{
+  "task": "ft-card-stalled-quiet-clock",
+  "outcome": "agent_timeout",
+  "steps": 89,
+  "cost_usd": 0.47078548999999986,
+  "duration_s": 5463.2,
+  "reward": 0.0,
+  "credit": 0.0
+}

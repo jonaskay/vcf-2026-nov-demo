@@ -1,0 +1,167 @@
+diff --git a/app/models/card/entropic.rb b/app/models/card/entropic.rb
+index ebaad78..0bc10ff 100644
+--- a/app/models/card/entropic.rb
++++ b/app/models/card/entropic.rb
+@@ -1,13 +1,17 @@
+ module Card::Entropic
+   extend ActiveSupport::Concern
+ 
++  # Use date-order batching only when the range has fewer than 10% of published cards.
++  EFFECTIVE_AUTO_POSTPONE_PERIOD_SQL = "COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period)".freeze
++  DATE_RANGE_SELECTIVITY_DENOMINATOR = 10
++
+   included do
+-    scope :due_to_be_postponed, -> do
++    scope :due_to_be_postponed, ->(now = Time.now) do
+       active
+         .joins(board: :account)
+         .left_outer_joins(board: :entropy)
+         .joins("LEFT OUTER JOIN entropies AS account_entropies ON account_entropies.account_id = accounts.id AND account_entropies.container_type = 'Account' AND account_entropies.container_id = accounts.id")
+-        .where("last_active_at <= #{connection.date_subtract('?', 'COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period)')}", Time.now)
++        .where("cards.last_active_at <= #{connection.date_subtract('?', EFFECTIVE_AUTO_POSTPONE_PERIOD_SQL)}", now)
+     end
+ 
+     scope :postponing_soon, -> do
+@@ -16,8 +20,8 @@ module Card::Entropic
+         .joins(board: :account)
+         .left_outer_joins(board: :entropy)
+         .joins("LEFT OUTER JOIN entropies AS account_entropies ON account_entropies.account_id = accounts.id AND account_entropies.container_type = 'Account' AND account_entropies.container_id = accounts.id")
+-        .where("last_active_at > #{connection.date_subtract('?', 'COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period)')}", now)
+-        .where("last_active_at <= #{connection.date_subtract('?', 'COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period) * 0.75')}", now)
++        .where("cards.last_active_at > #{connection.date_subtract('?', EFFECTIVE_AUTO_POSTPONE_PERIOD_SQL)}", now)
++        .where("cards.last_active_at <= #{connection.date_subtract('?', "#{EFFECTIVE_AUTO_POSTPONE_PERIOD_SQL} * 0.75")}", now)
+     end
+ 
+     delegate :auto_postpone_period, to: :board
+@@ -25,8 +29,25 @@ module Card::Entropic
+ 
+   class_methods do
+     def auto_postpone_all_due
+-      due_to_be_postponed.find_each do |card|
+-        card.auto_postpone(user: card.account.system_user)
++      now = Time.now
++      minimum_period = Entropy.minimum(:auto_postpone_period) || Entropy::AUTO_POSTPONE_PERIODS_IN_SECONDS.min
++      date_cutoff = now - minimum_period + 1.second
++      published_cards = published
++      date_range_candidate_count = published_cards.where("cards.last_active_at <= ?", date_cutoff).count
++      published_card_count = published_cards.count
++      due_cards = due_to_be_postponed(now)
++
++      if date_range_candidate_count * DATE_RANGE_SELECTIVITY_DENOMINATOR < published_card_count
++        # SQLite's datetime() drops fractional seconds, so keep the date prefilter one second wider.
++        due_cards.where("cards.last_active_at <= ?", date_cutoff)
++          # Auto-postponing advances last_active_at, so descending order keeps changed cards behind the cursor.
++          .find_each(cursor: [ :last_active_at, :id ], order: [ :desc, :desc ]) do |card|
++            card.auto_postpone(user: card.account.system_user)
++          end
++      else
++        due_cards.find_each do |card|
++          card.auto_postpone(user: card.account.system_user)
++        end
+       end
+     end
+   end
+diff --git a/db/migrate/20260219120000_add_entropy_sweep_index_to_cards.rb b/db/migrate/20260219120000_add_entropy_sweep_index_to_cards.rb
+new file mode 100644
+index 0000000..605fedf
+--- /dev/null
++++ b/db/migrate/20260219120000_add_entropy_sweep_index_to_cards.rb
+@@ -0,0 +1,5 @@
++class AddEntropySweepIndexToCards < ActiveRecord::Migration[8.2]
++  def change
++    add_index :cards, [ :last_active_at, :id, :status ]
++  end
++end
+diff --git a/db/schema.rb b/db/schema.rb
+index 99e6be9..5f30142 100644
+--- a/db/schema.rb
++++ b/db/schema.rb
+@@ -10,7 +10,7 @@
+ #
+ # It's strongly recommended that you check this file into your version control system.
+ 
+-ActiveRecord::Schema[8.2].define(version: 2026_02_18_120000) do
++ActiveRecord::Schema[8.2].define(version: 2026_02_19_120000) do
+   create_table "accesses", id: :uuid, charset: "utf8mb4", collation: "utf8mb4_0900_ai_ci", force: :cascade do |t|
+     t.datetime "accessed_at"
+     t.uuid "account_id", null: false
+@@ -231,6 +231,7 @@ ActiveRecord::Schema[8.2].define(version: 2026_02_18_120000) do
+     t.index ["account_id", "number"], name: "index_cards_on_account_id_and_number", unique: true
+     t.index ["board_id"], name: "index_cards_on_board_id"
+     t.index ["column_id"], name: "index_cards_on_column_id"
++    t.index ["last_active_at", "id", "status"], name: "index_cards_on_last_active_at_and_id_and_status"
+   end
+ 
+   create_table "closers_filters", id: false, charset: "utf8mb4", collation: "utf8mb4_0900_ai_ci", force: :cascade do |t|
+diff --git a/db/schema_sqlite.rb b/db/schema_sqlite.rb
+index 00125d1..a48327d 100644
+--- a/db/schema_sqlite.rb
++++ b/db/schema_sqlite.rb
+@@ -10,7 +10,7 @@
+ #
+ # It's strongly recommended that you check this file into your version control system.
+ 
+-ActiveRecord::Schema[8.2].define(version: 2026_02_18_120000) do
++ActiveRecord::Schema[8.2].define(version: 2026_02_19_120000) do
+   create_table "accesses", id: :uuid, force: :cascade do |t|
+     t.datetime "accessed_at"
+     t.uuid "account_id", null: false
+@@ -231,6 +231,7 @@ ActiveRecord::Schema[8.2].define(version: 2026_02_18_120000) do
+     t.index ["account_id", "number"], name: "index_cards_on_account_id_and_number", unique: true
+     t.index ["board_id"], name: "index_cards_on_board_id"
+     t.index ["column_id"], name: "index_cards_on_column_id"
++    t.index ["last_active_at", "id", "status"], name: "index_cards_on_last_active_at_and_id_and_status"
+   end
+ 
+   create_table "closers_filters", id: false, force: :cascade do |t|
+diff --git a/test/models/card/entropic_test.rb b/test/models/card/entropic_test.rb
+index 848cfa7..4a716e4 100644
+--- a/test/models/card/entropic_test.rb
++++ b/test/models/card/entropic_test.rb
+@@ -59,6 +59,46 @@ class Card::EntropicTest < ActiveSupport::TestCase
+     assert_not cards(:shipping).reload.postponed?
+   end
+ 
++  test "auto postpone all due across entropy periods without postponing inactive cards" do
++    freeze_time
++
++    entropies(:writebook_board).destroy
++    cards(:logo).update!(last_active_at: 31.days.ago)
++    cards(:shipping).update!(last_active_at: 29.days.ago)
++    cards(:radio).update!(last_active_at: 91.days.ago)
++
++    cards(:text).postpone
++    cards(:text).update!(last_active_at: 40.days.ago)
++    cards(:paycheck).close
++    cards(:paycheck).update!(last_active_at: 100.days.ago)
++    cards(:unfinished_thoughts).update!(last_active_at: 400.days.ago)
++
++    assert_difference -> { Card.postponed.count }, +2 do
++      Card.auto_postpone_all_due
++    end
++
++    assert cards(:logo).reload.postponed?
++    assert cards(:radio).reload.postponed?
++    assert_not cards(:shipping).reload.postponed?
++    assert cards(:text).reload.postponed?
++    assert cards(:paycheck).reload.closed?
++    assert_not cards(:unfinished_thoughts).reload.published?
++  end
++
++  test "auto postpone all due includes legacy periods shorter than the allowed minimum" do
++    freeze_time
++
++    entropies(:writebook_board).update_column(:auto_postpone_period, 1.day.to_i)
++    cards(:layout, :text, :shipping, :buy_domain).each { |card| card.update!(last_active_at: 1.minute.ago) }
++    cards(:logo).update!(last_active_at: 2.days.ago)
++
++    assert_difference -> { Card.postponed.count }, +1 do
++      Card.auto_postpone_all_due
++    end
++
++    assert cards(:logo).reload.postponed?
++  end
++
+   test "postponing soon scope" do
+     cards(:logo, :shipping).each(&:published!)
+ 

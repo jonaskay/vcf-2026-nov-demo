@@ -1,0 +1,128 @@
+diff --git a/app/models/card/entropic.rb b/app/models/card/entropic.rb
+index ebaad78..c824fd5 100644
+--- a/app/models/card/entropic.rb
++++ b/app/models/card/entropic.rb
+@@ -25,9 +25,29 @@ module Card::Entropic
+ 
+   class_methods do
+     def auto_postpone_all_due
+-      due_to_be_postponed.find_each do |card|
+-        card.auto_postpone(user: card.account.system_user)
+-      end
++      now = Time.now
++
++      # Fixed cutoffs keep SQLite's account/activity index usable.
++      Account
++        .includes(:entropy, boards: [ :entropy, { account: :entropy } ])
++        .find_each do |account|
++          user = nil
++          account_period = account.entropy&.auto_postpone_period
++          boards_by_period = account.boards.group_by do |board|
++            board.entropy&.auto_postpone_period || account_period
++          end
++
++          boards_by_period.each do |period, boards|
++            if period
++              account.cards.active
++                .where(board_id: boards.map(&:id), last_active_at: ..(now - period))
++                .find_each do |card|
++                  user ||= account.system_user
++                  card.auto_postpone(user: user)
++                end
++            end
++          end
++        end
+     end
+   end
+ 
+diff --git a/test/models/card/entropic_test.rb b/test/models/card/entropic_test.rb
+index 848cfa7..427d526 100644
+--- a/test/models/card/entropic_test.rb
++++ b/test/models/card/entropic_test.rb
+@@ -47,6 +47,86 @@ class Card::EntropicTest < ActiveSupport::TestCase
+     assert_not cards(:shipping).reload.postponed?
+   end
+ 
++  test "auto postpone all due includes cards exactly at the entropy cutoff" do
++    freeze_time
++
++    cutoff = Time.now - entropies(:writebook_board).auto_postpone_period
++    cards(:logo).update! last_active_at: cutoff
++    cards(:layout).update! last_active_at: cutoff + 1.second
++
++    Card.auto_postpone_all_due
++
++    assert cards(:logo).reload.postponed?
++    assert_not cards(:layout).reload.postponed?
++  end
++
++  test "auto postpone all due only considers active published cards" do
++    freeze_time
++
++    cutoff = Time.now - entropies(:writebook_board).auto_postpone_period
++    cards(:logo).update! last_active_at: cutoff
++    cards(:layout).postpone
++    cards(:layout).update! last_active_at: cutoff
++    cards(:text).update! status: :drafted, last_active_at: cutoff
++    cards(:shipping).update! last_active_at: cutoff
++    cards(:buy_domain).update! last_active_at: cutoff + 1.second
++
++    assert_difference -> { Card.postponed.count }, +1 do
++      Card.auto_postpone_all_due
++    end
++
++    assert cards(:logo).reload.postponed?
++    assert cards(:layout).reload.postponed?
++    assert cards(:shipping).reload.closed?
++    assert cards(:text).reload.drafted?
++    assert_not cards(:buy_domain).reload.postponed?
++  end
++
++  test "auto postpone scopes card queries to an account and activity cutoff" do
++    freeze_time
++
++    card_queries = []
++    callback = ->(_name, _started, _finished, _unique_id, payload) do
++      card_queries << payload[:sql] if payload[:name] == "Card Load"
++    end
++
++    ActiveSupport::Notifications.subscribed(callback, "sql.active_record") do
++      Card.auto_postpone_all_due
++    end
++
++    candidate_queries = card_queries.select { |sql| sql.include?("last_active_at") }
++    assert_not_empty candidate_queries
++    assert candidate_queries.all? { |sql| sql.include?("account_id") }
++    assert candidate_queries.none? { |sql| sql.match?(/JOIN ["`]?boards/i) }
++    assert candidate_queries.none? { |sql| sql.match?(/JOIN .*entropies/i) }
++
++    if Card.connection.adapter_name == "SQLite"
++      period = entropies(:writebook_board).auto_postpone_period
++      relation = accounts("37s").cards.active
++        .where(board_id: [ boards(:writebook).id ], last_active_at: ..(Time.now - period))
++        .order(:id).limit(1000)
++      plan = relation.explain.inspect
++
++      assert_includes plan, "index_cards_on_account_id_and_last_active_at_and_status"
++    end
++  end
++
++  test "auto postpone all due handles board and account entropy in the same sweep" do
++    freeze_time
++
++    entropies(:private_board).destroy
++    account_due = boards(:private).cards.create!(title: "Account-default card", creator: users(:kevin), status: :published)
++    account_due.update! last_active_at: 31.days.ago
++    cards(:logo).update! last_active_at: 91.days.ago
++    cards(:layout).update! last_active_at: 31.days.ago
++
++    Card.auto_postpone_all_due
++
++    assert account_due.reload.postponed?
++    assert cards(:logo).reload.postponed?
++    assert_not cards(:layout).reload.postponed?
++  end
++
+   test "auto postpone all due using entropy defined at the board level" do
+     cards(:logo).update!(last_active_at: 1.day.ago - entropies(:writebook_board).auto_postpone_period)
+     cards(:shipping).update!(last_active_at: 1.day.from_now - entropies(:writebook_board).auto_postpone_period)
