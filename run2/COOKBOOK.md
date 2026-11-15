@@ -44,6 +44,14 @@ RUN_ROOT=run1 harness2/scores.sh --refs ft-saas-billing
 If Docker has less than 8 CPUs / 12 GB, lower the parallelism for every command below with
 `export MAX_SANDBOXES=4` (each sandbox takes 2 CPUs / 2 GB).
 
+**Keep the Mac awake.** Every long command below runs under `caffeinate -dims`. If the Mac sleeps,
+the Docker VM pauses and in-flight API calls die: rollouts hang with no CPU and no traffic, the
+in-container `timeout` stops counting (it runs on the VM clock), and any rollout that survives has
+the sleep in its `duration_s`. `caffeinate` only stops idle sleep: keep the lid open and stay on
+power (`-s` has no effect on battery). If a run did span a sleep (`pmset -g log | grep -E ' (Sleep|Wake) '`),
+stop it, remove the `lemans-*` containers and the affected `rN` directories (the ones without a
+`result.json`, plus any that finished after the wake), and rerun the same command.
+
 Optional, recommended: commit the run-2 code first, so the exact scripts that produced run 2 are
 in git.
 
@@ -60,17 +68,24 @@ git commit -m "Run 2: freeze run 1, implement the rerun plan"
 The published pass rates came from another API route, and local runs were 2–3× slower in run 1.
 Before committing to the stream, check that the "varying" tasks actually vary locally.
 
+The plan's third candidate, `ft-saas-billing`, is dropped: its Dockerfile pins an amd64-only base
+image, and under emulation on this arm64 Mac the agent's jail can't start (`pidfd_open failed`,
+see [STEP1-FOLLOWUPS.md](STEP1-FOLLOWUPS.md)). The report should say it was dropped because it
+**can't run on arm64**, not because it scored 0/3. Its place goes to the next candidate,
+`ft-card-reactions`.
+
 ```sh
-harness2/refs.sh ft-local-time-human-clock ft-notification-bundle-window-overlap ft-saas-billing
+caffeinate -dims harness2/refs.sh ft-local-time-human-clock ft-notification-bundle-window-overlap ft-card-reactions
 ```
 
 Runs 9 Luna rollouts in parallel; it takes as long as the slowest one (≤ 90 min). Progress:
-`tail -f run2/logs/refs.log`.
+`tail -f run2/logs/refs.log`. Finished rollouts are skipped, so after an interruption run the same
+command again.
 
 Then the gate (prints scores to the terminal; don't redirect it into `run2/`):
 
 ```sh
-harness2/scores.sh --refs ft-local-time-human-clock ft-notification-bundle-window-overlap ft-saas-billing
+harness2/scores.sh --refs ft-local-time-human-clock ft-notification-bundle-window-overlap ft-card-reactions
 ```
 
 **Go on when:** the last line says `PASS` (≥ 2 of the 3 tasks have a pass or credit > 0 locally).
@@ -78,14 +93,19 @@ harness2/scores.sh --refs ft-local-time-human-clock ft-notification-bundle-windo
 **If a task is 0/3 locally,** swap it for the next candidate and test that:
 
 ```sh
-harness2/refs.sh ft-card-reactions
-harness2/scores.sh --refs ft-card-reactions
-# candidates, in order: ft-card-reactions, ft-board-publish-unpublish-public-boundary, ft-activity-feed-api
+caffeinate -dims harness2/refs.sh ft-board-publish-unpublish-public-boundary
+harness2/scores.sh --refs ft-board-publish-unpublish-public-boundary
+# candidates, in order: ft-board-publish-unpublish-public-boundary, ft-activity-feed-api
 ```
 
-Then edit `harness2/stream-tasks.txt` so the varying tasks come first and the three run-1 tasks
-(card, entropy, mysql) stay last. **Finish this file before step 3**, because the Meta-Harness
-transfer runs read it.
+Before trying any task outside this list, check it can run on arm64: if it has an
+`environment/Dockerfile`, `docker buildx imagetools inspect <base>` must list `linux/arm64`.
+
+Then edit `harness2/stream-tasks.txt`: replace `ft-saas-billing` (line 3) with the task that
+passed, keep the varying tasks first and the three run-1 tasks (card, entropy, mysql) last. Remove
+`run2/baselines/h0/ft-saas-billing/` (it holds only `agent_error` records) so nothing picks it up;
+the raw records stay in `private/raw-runs/r2-h0-ft-saas-billing-*` as evidence for the report.
+**Finish this before step 3**, because the Meta-Harness transfer runs read the task list.
 
 Also fine: if a run ends `agent_error` (for example the content filter), `run_harness.sh` reruns it
 once by itself. If it still has no record, rerun `refs.sh` with the same arguments: finished
@@ -98,7 +118,7 @@ rollouts are skipped.
 Editors, composer and selector with Opus 5.5 on task 1's three H0 refs. No probes and no Luna runs.
 
 ```sh
-DRY=1 harness2/task.sh "$(head -1 harness2/stream-tasks.txt)"
+DRY=1 caffeinate -dims harness2/task.sh "$(head -1 harness2/stream-tasks.txt)"
 ```
 
 Then inspect `run2/work/<task1>/`:
@@ -135,8 +155,8 @@ them: `rm -rf run2/work/<task1>/{inv,dom}`. (`compose_dry` and `select_dry` are 
 Both in parallel; together they share the `MAX_SANDBOXES` limit.
 
 ```sh
-harness2/refs.sh $(tail -3 harness2/stream-tasks.txt) > /dev/null &
-meta_harness/transfer.sh > /dev/null &
+caffeinate -dims harness2/refs.sh $(tail -3 harness2/stream-tasks.txt) > /dev/null &
+caffeinate -dims meta_harness/transfer.sh > /dev/null &
 wait
 tail -n 40 run2/logs/refs.log run2/logs/transfer.log
 ```
@@ -152,8 +172,10 @@ says `NO RECORD`. Re-running either script fills only the gaps.
 ## Step 4: The stream, overnight (Phase 4)
 
 ```sh
-nohup harness2/stream.sh > run2/logs/stream.log 2>&1 &
+nohup caffeinate -dims harness2/stream.sh > run2/logs/stream.log 2>&1 &
 ```
+
+It runs overnight, so the "keep the Mac awake" rule from step 0 matters most here: lid open, on power.
 
 Per task: editors (~minutes) → 6 probes in parallel (≤ 90 min) → composer → 3 composed runs
 (≤ 90 min, skipped if the composed harness equals H0 or a candidate) → selector → reflector.
@@ -186,6 +208,7 @@ and a `GATE:` line. Before spending on tasks 2–6, read `run2/work/<task1>/refl
 | `exit 1`, `failed` | a stage errored (`ERROR:` in `task.log`) | fix, then rerun `stream.sh`: the task resumes from its last finished stage |
 | `REFUSING: ... already being worked on` | another stream/task holds the lock | check `ps`; a dead process's lock clears itself |
 | `ENGAGEMENT MISS after the retry` | a session still skipped required files | nothing to do now; it's logged and goes in the report |
+| rollouts at 0% CPU, no proxy traffic, files untouched for a long time | the Mac slept mid-run | see "Keep the Mac awake" in step 0 |
 
 To end after the current task: `touch run2/STOP`. To restart later: run the same `nohup` command.
 Finished tasks (`work/<task>/DONE`) are skipped.
@@ -226,12 +249,12 @@ Separates "Opus vs Sonnet" from "k=3" for the selector and reflector, on the sam
 composer ablation would need new composed runs, so it's out of this recipe.)
 
 ```sh
-T=ft-saas-billing                          # pick a finished task
+T=ft-local-time-human-clock                # pick a finished task
 mkdir -p run2-ablation/work run2-ablation/library
 cp -R run2/work/$T run2-ablation/work/
 cp -R run2/library/. run2-ablation/library/; rm -rf run2-ablation/library/$T
 rm -rf run2-ablation/work/$T/{select,select.map.tsv,select.pool.tsv,select.selected.tsv,reflect,DONE}
-RUN_ROOT=run2-ablation IMPROVER_MODEL=claude-sonnet-5-5 harness2/task.sh $T
+RUN_ROOT=run2-ablation IMPROVER_MODEL=claude-sonnet-5-5 caffeinate -dims harness2/task.sh $T
 RUN_ROOT=run2-ablation harness2/scores.sh $T
 ```
 
