@@ -1,0 +1,44 @@
+{
+  "trial": "ft-saas-billing__aRVPG2T",
+  "task": "ft-saas-billing",
+  "agent": "harnessed-miniswen",
+  "model": "openai/gpt-6-luna#max",
+  "index": 1,
+  "profile_digest": "73116e4a943eabe1",
+  "task_digest": "afb82432cbd59725",
+  "revision": {
+    "commit": "f587d5a44897f3467af2a48c0503aef4eb6acf55",
+    "dirty": true
+  },
+  "lemans_version": "1.6.0",
+  "tags": [
+    "rails",
+    "action-controller",
+    "engines",
+    "billing",
+    "webhooks"
+  ],
+  "metadata": {
+    "category": "full-features"
+  },
+  "phases": [
+    {
+      "name": "environment_setup",
+      "started_at": "2026-11-15T13:25:17.560475Z",
+      "finished_at": "2026-11-15T13:26:39.166610Z"
+    },
+    {
+      "name": "agent",
+      "started_at": "2026-11-15T13:26:39.166644Z",
+      "finished_at": "2026-11-15T13:26:40.107617Z"
+    }
+  ],
+  "outcome": {
+    "name": "agent_error",
+    "scored": false,
+    "detail": "miniswen-installed: no usable result file (exit 1, docker cp lemans-8fd5d5d78503:/tmp/lemans-miniswen.result.json exited 1: Error response from daemon: Could not find the file /tmp/lemans-miniswen.result.json in container lemans-8fd5d5d78503\n): jail did not start: unshare: pidfd_open failed: Function not implemented\n"
+  },
+  "duration": 82.5,
+  "started_at": "2026-11-15T13:25:17Z",
+  "finished_at": "2026-11-15T13:26:40Z"
+}
