@@ -1,0 +1,30 @@
+<notes>
+I changed one component: `tool_guidance.md`. No other file was touched, and the submit instruction is still in `system.md` and `guardrails.md`.
+
+**What the evidence showed.** All three base runs finished, in 47 to 49 minutes, so running out of time was not the problem. Instead, every run hit the same tool errors:
+
+1. **`python3` is not installed, and every run tried to use it.** Each run wrote its first large multi-file edit as a `python3` heredoc and got exit 127, "python3: command not found":
+   - r1 step 21
+   - r2 step 25
+   - r3 step 15 (three python heredocs in one command)
+
+   The base `tool_guidance.md` invites this: its only "create a file" example writes `newfile.py` containing `import numpy`. I replaced it with an example that writes a Ruby helper.
+2. **The Ruby rewrites then failed or left files half-edited.**
+   - r2 step 26 failed with `uninitialized constant Pathname (NameError)` because plain `ruby` doesn't load `pathname`.
+   - r2 step 27 aborted on a missing anchor after its first two replacements had already been written. It then had to re-inspect (step 28) and re-send the edits (step 29).
+   - r3 step 25 printed "Missing TimeHelper body", but the commands after it still ran because they weren't chained with `&&`. Step 26 had to rewrite the file.
+
+   I added one short Ruby pattern that checks every anchor before writing any file. It comes with a single fallback and a stop condition: print the actual lines with `nl -ba`, fix only that anchor, and don't re-send the whole script unchanged. It also says to chain later commands with `&&`.
+3. **`rg` is not installed.** Step 4 of all three runs got exit 127, "rg: command not found". The guidance now says to use `git grep -n` or `grep -RIn`.
+
+**Test facts added.** One divergence drove this: after its last system-test run at step 26, r3 edited its system test (steps 39–40). It then ran only `bin/rails test` (step 43), which ran 1544 tests in 16s and started no Capybara, so the edited browser test was never re-run. r1 did the opposite: it named its system test file explicitly and re-ran it (steps 38–39). Each fact below comes from repository output:
+- **System tests can run here.** `which chromium chromedriver` printed `/usr/bin/chromium` and `/usr/bin/chromedriver` (r1 step 33).
+- **They run when the file is named.** `bundle exec rails test test/system/local_time_test.rb` gave "1 runs, 10 assertions, 0 failures" (r1 step 39).
+- **Capybara has no `execute_async_script`.** r1 step 38 failed with `NoMethodError: undefined method 'execute_async_script' for an instance of Capybara::Session`. Switching to `page.driver.browser.execute_async_script` fixed it (step 39).
+- **`execute_cdp` is available.** It is defined in `selenium-webdriver-4.44.0/.../has_cdp.rb:30` (r1 step 33).
+- **The Selenium warnings are harmless.** The "Exception managing chrome: error sending request" warning appears in the passing run (r1 step 39).
+- **The full suite is quick and skips system tests.** `bin/rails test` ran "1544 runs … Finished in 16.363233s" with no Capybara or Puma output (r3 step 43).
+- **`bin/rubocop FILES` works.** It reported "8 files inspected, no offenses detected" (r3 step 43).
+
+**Why this component.** `tool_guidance.md` is where bash, editing and test-suite guidance belongs, and it was already always-on. The edit replaces the misleading Python example instead of piling more text on top. I didn't add anything on exploration depth, diff review or finishing on time: all three runs already reviewed `git status` and `git diff`, ran the full suite and rubocop, and submitted with about 40 minutes to spare.
+</notes>

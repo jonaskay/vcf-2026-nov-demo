@@ -1,0 +1,9 @@
+I picked c02. All three move every server-formatted date into a browser-side `<time>` tag handled by a `local-time` Stimulus controller, and all drop the timezone from the ETag, so the decision came down to fidelity and operational fitness.
+
+- **c03 (rejected):** it goes beyond the request. It replaces the timezone sync mechanism with a new JS `put` call and a new `timezone-update-url` meta tag, and deletes the `_time_zone` partial. It also adds a test claiming the events timeline ETags still vary by timezone, but the same patch removes the timezone from the shared ETag.
+- **c01 (closest runner-up):** its share-sheet text works by swapping `{{timestamp}}` placeholders out of a string, which is fragile. More seriously, it deletes the exported `beginningOfDay` from `date_helpers.js`, so any other JavaScript that imports it would fail to load.
+- **c02 (chosen):** it keeps the existing helper exports and covers the request's examples. Comments read as a clock time today, then "yesterday" or "N days ago", then a short date. The auto-close notice reads "tomorrow" or "in 3 days". A system test checks each of these. Its one deviation is renaming `bridge_share_card_description` to `bridge_share_card_details`. The request doesn't name that method, but if anything else calls it, the rename would break it.
+
+```choice
+c02
+```

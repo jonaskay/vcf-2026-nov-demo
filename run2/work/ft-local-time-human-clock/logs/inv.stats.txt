@@ -1,0 +1,7 @@
+inv
+{"subtype":"success","cost_usd":1.3005402000000001,"turns":31}
+tool calls:
+   3 Edit
+  27 Read
+distinct files read: 14
+audit: clean

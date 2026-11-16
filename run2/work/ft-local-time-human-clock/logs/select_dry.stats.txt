@@ -1,0 +1,7 @@
+select_dry
+{"subtype":"success","cost_usd":0.2919328,"turns":5}
+tool calls:
+   4 Read
+distinct files read: 4
+audit: clean
+engagement[selector]: trajectories opened per arm: none; evidence.md NOT read; 0 miss(es)
