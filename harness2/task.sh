@@ -406,7 +406,11 @@ with open(sys.argv[2], "w") as f:
   while IFS=$'\t' read -r id arm run dir label; do
     cp "$dir/agent.patch" "$sd/context/candidates/$id.patch"
   done < "$w/$sst.map.tsv"
-  session "$sst" "$sst" selector.md read "${SELECTOR_BUDGET:-4}"
+  # The sessions have no tool that lists a folder, so the prompt must name every candidate file.
+  ids=$(cut -f1 "$w/$sst.map.tsv" | sed 's#.*#    context/candidates/&.patch#')
+  session "$sst" "$sst" selector.md read "${SELECTOR_BUDGET:-4}" "# THE CANDIDATES IN THIS POOL
+
+$ids"
   pick() { perl -0ne 'if (/```choice\s*\n?\s*(c\d+)\s*\n?\s*```/s) { print "$1" }' "$1"; }
   choice=$(pick "$sd/reply.$sst.txt")
   miss=""
