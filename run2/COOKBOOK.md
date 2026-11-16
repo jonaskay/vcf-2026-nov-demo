@@ -165,7 +165,26 @@ tail -n 40 run2/logs/refs.log run2/logs/transfer.log
 (21 runs), from the sealed copy in `run1/`.
 
 **Go on when:** every line in both logs shows an outcome (`completed` or `agent_timeout`), none
-says `NO RECORD`. Re-running either script fills only the gaps.
+says `NO RECORD`, and no record is an `environment_error`:
+
+```sh
+grep -rl environment_error run2/baselines run2/meta_harness --include=result.json || echo "no env errors"
+```
+
+Re-running either script fills only the gaps.
+
+**If a rollout ended `environment_error`,** it's an infrastructure failure, but it has a
+`result.json`, so the scripts skip it and `scores.sh` counts it as a non-pass. The usual cause is
+Docker running out of network subnets when many sandboxes start at once (`all predefined address
+pools have been fully subnetted` in the run's log under `private/raw-runs/`). Prune the networks,
+remove the bad record directories (the raw records stay in `private/raw-runs/`), and rerun the same
+commands:
+
+```sh
+docker network prune -f
+grep -rl environment_error run2/baselines run2/meta_harness --include=result.json \
+  | xargs -n1 dirname | xargs rm -rf
+```
 
 ---
 
