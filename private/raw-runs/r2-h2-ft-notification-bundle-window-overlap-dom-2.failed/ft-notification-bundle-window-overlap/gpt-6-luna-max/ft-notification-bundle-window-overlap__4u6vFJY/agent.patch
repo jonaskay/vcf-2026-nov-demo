@@ -1,0 +1,13 @@
+diff --git a/test/models/user/settings_test.rb b/test/models/user/settings_test.rb
+new file mode 100644
+index 0000000..1250386
+--- /dev/null
++++ b/test/models/user/settings_test.rb
+@@ -0,0 +1,7 @@
++require "test_helper"
++
++class User::SettingsTest < ActiveSupport::TestCase
++  test "bundle email frequency defaults to off" do
++    assert_equal "never", users(:david).settings.bundle_email_frequency
++  end
++end

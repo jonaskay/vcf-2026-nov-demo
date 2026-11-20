@@ -1,0 +1,100 @@
+diff --git a/app/models/card/entropic.rb b/app/models/card/entropic.rb
+index ebaad78..a1a75d0 100644
+--- a/app/models/card/entropic.rb
++++ b/app/models/card/entropic.rb
+@@ -2,12 +2,12 @@ module Card::Entropic
+   extend ActiveSupport::Concern
+ 
+   included do
+-    scope :due_to_be_postponed, -> do
++    scope :due_to_be_postponed, ->(now = Time.now) do
+       active
+         .joins(board: :account)
+         .left_outer_joins(board: :entropy)
+         .joins("LEFT OUTER JOIN entropies AS account_entropies ON account_entropies.account_id = accounts.id AND account_entropies.container_type = 'Account' AND account_entropies.container_id = accounts.id")
+-        .where("last_active_at <= #{connection.date_subtract('?', 'COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period)')}", Time.now)
++        .where("last_active_at <= #{connection.date_subtract('?', 'COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period)')}", now)
+     end
+ 
+     scope :postponing_soon, -> do
+@@ -25,8 +25,19 @@ module Card::Entropic
+ 
+   class_methods do
+     def auto_postpone_all_due
+-      due_to_be_postponed.find_each do |card|
+-        card.auto_postpone(user: card.account.system_user)
++      now = Time.now
++      minimum_period_by_account = Entropy.group(:account_id).minimum(:auto_postpone_period)
++      system_users = {}
++
++      minimum_period_by_account.each do |account_id, minimum_period|
++        # Every effective period is at least the smallest stored period for this account.
++        # Keep the exact scope as final filter and widen the candidate cutoff for date arithmetic rounding.
++        due_to_be_postponed(now)
++          .where(account_id: account_id, last_active_at: ..(now - minimum_period.seconds + 1.second))
++          .find_each(cursor: [ :last_active_at, :id ], order: [ :asc, :asc ]) do |card|
++            system_user = system_users[card.account_id] ||= card.account.system_user
++            card.auto_postpone(user: system_user)
++          end
+       end
+     end
+   end
+diff --git a/test/models/card/entropic_test.rb b/test/models/card/entropic_test.rb
+index 848cfa7..2eebcf5 100644
+--- a/test/models/card/entropic_test.rb
++++ b/test/models/card/entropic_test.rb
+@@ -59,6 +59,54 @@ class Card::EntropicTest < ActiveSupport::TestCase
+     assert_not cards(:shipping).reload.postponed?
+   end
+ 
++  test "auto postpone all due respects mixed stored entropy periods at the inclusive boundary" do
++    freeze_time
++
++    entropies("37s_account").update_column(:auto_postpone_period, 1.day.to_i)
++    entropies(:writebook_board).destroy
++    entropies(:initech_account).update! auto_postpone_period: 7.days
++    entropies(:miltons_wish_list_board).update_column(:auto_postpone_period, 999.days.to_i)
++
++    cards(:logo).update!(last_active_at: Time.now - 1.day)
++    cards(:layout).update!(last_active_at: Time.now - 1.day + 1.second)
++    cards(:text).update!(last_active_at: Time.now)
++    cards(:buy_domain).update!(last_active_at: Time.now)
++    cards(:radio).update!(last_active_at: Time.now - 999.days)
++    cards(:paycheck).update!(last_active_at: Time.now - 998.days)
++
++    expected_due_ids = Card.due_to_be_postponed.pluck(:id)
++    assert_equal cards(:logo, :radio).map(&:id).sort, expected_due_ids.sort
++    assert_empty(expected_due_ids & Card.postponing_soon.pluck(:id))
++
++    previously_postponed_ids = Card.postponed.pluck(:id)
++    Card.auto_postpone_all_due
++    newly_postponed_ids = Card.postponed.pluck(:id) - previously_postponed_ids
++
++    assert_equal expected_due_ids.sort, newly_postponed_ids.sort
++    assert_equal accounts("37s").system_user, cards(:logo).reload.postponed_by
++    assert_equal accounts("initech").system_user, cards(:radio).reload.postponed_by
++    assert_not cards(:layout).reload.postponed?
++    assert_not cards(:paycheck).reload.postponed?
++  end
++
++  test "due sweep batches use the account activity index on SQLite" do
++    if ActiveRecord::Base.connection.adapter_name == "SQLite"
++      now = Time.now
++      account_id = accounts("37s").id
++      minimum_period = Entropy.where(account_id: account_id).minimum(:auto_postpone_period)
++      candidates = Card.due_to_be_postponed(now)
++        .where(account_id: account_id, last_active_at: ..(now - minimum_period.seconds + 1.second))
++        .order(last_active_at: :asc, id: :asc)
++        .limit(1000)
++      plan = ActiveRecord::Base.connection.select_all(
++        "EXPLAIN QUERY PLAN #{candidates.to_sql}"
++      ).rows.map(&:last).join("\n")
++
++      assert_match(/USING INDEX index_cards_on_account_id_and_last_active_at_and_status/, plan)
++      assert_no_match(/SCAN cards/, plan)
++    end
++  end
++
+   test "postponing soon scope" do
+     cards(:logo, :shipping).each(&:published!)
+ 

@@ -1,0 +1,151 @@
+diff --git a/app/models/card/entropic.rb b/app/models/card/entropic.rb
+index ebaad78..ab5938f 100644
+--- a/app/models/card/entropic.rb
++++ b/app/models/card/entropic.rb
+@@ -25,8 +25,23 @@ module Card::Entropic
+ 
+   class_methods do
+     def auto_postpone_all_due
+-      due_to_be_postponed.find_each do |card|
+-        card.auto_postpone(user: card.account.system_user)
++      now = Time.current
++      system_users = {}
++
++      Board.includes(:entropy, account: :entropy).find_each do |board|
++        period = board.entropy&.auto_postpone_period
++
++        if period
++          cutoff = now - period
++
++          active
++            .where(board_id: board.id, last_active_at: ..cutoff)
++            .preload(:account, :board)
++            .find_each(cursor: [ :last_active_at, :id ]) do |card|
++              user = system_users[card.account_id] ||= card.account.system_user
++              card.auto_postpone(user: user)
++            end
++        end
+       end
+     end
+   end
+diff --git a/app/models/card/eventable/system_commenter.rb b/app/models/card/eventable/system_commenter.rb
+index 5c7defc..20cb845 100644
+--- a/app/models/card/eventable/system_commenter.rb
++++ b/app/models/card/eventable/system_commenter.rb
+@@ -10,10 +10,18 @@ class Card::Eventable::SystemCommenter
+   def comment
+     return unless comment_body.present?
+ 
+-    card.comments.create! creator: card.account.system_user, body: comment_body, created_at: event.created_at
++    card.comments.create! creator: comment_creator, body: comment_body, created_at: event.created_at
+   end
+ 
+   private
++    def comment_creator
++      if event.action.card_auto_postponed? && event.creator.system? && event.creator.account_id == card.account_id
++        event.creator
++      else
++        card.account.system_user
++      end
++    end
++
+     def comment_body
+       case event.action
+       when "card_assigned"
+diff --git a/db/migrate/20261116120000_add_entropy_sweep_index_to_cards.rb b/db/migrate/20261116120000_add_entropy_sweep_index_to_cards.rb
+new file mode 100644
+index 0000000..d3de113
+--- /dev/null
++++ b/db/migrate/20261116120000_add_entropy_sweep_index_to_cards.rb
+@@ -0,0 +1,6 @@
++class AddEntropySweepIndexToCards < ActiveRecord::Migration[8.2]
++  def change
++    add_index :cards, [ :board_id, :status, :last_active_at, :id ], name: :index_cards_for_entropy_sweep
++    remove_index :cards, :board_id
++  end
++end
+diff --git a/db/schema.rb b/db/schema.rb
+index 99e6be9..5089acd 100644
+--- a/db/schema.rb
++++ b/db/schema.rb
+@@ -10,7 +10,7 @@
+ #
+ # It's strongly recommended that you check this file into your version control system.
+ 
+-ActiveRecord::Schema[8.2].define(version: 2026_02_18_120000) do
++ActiveRecord::Schema[8.2].define(version: 2026_11_16_120000) do
+   create_table "accesses", id: :uuid, charset: "utf8mb4", collation: "utf8mb4_0900_ai_ci", force: :cascade do |t|
+     t.datetime "accessed_at"
+     t.uuid "account_id", null: false
+@@ -229,7 +229,7 @@ ActiveRecord::Schema[8.2].define(version: 2026_02_18_120000) do
+     t.datetime "updated_at", null: false
+     t.index ["account_id", "last_active_at", "status"], name: "index_cards_on_account_id_and_last_active_at_and_status"
+     t.index ["account_id", "number"], name: "index_cards_on_account_id_and_number", unique: true
+-    t.index ["board_id"], name: "index_cards_on_board_id"
++    t.index ["board_id", "status", "last_active_at", "id"], name: "index_cards_for_entropy_sweep"
+     t.index ["column_id"], name: "index_cards_on_column_id"
+   end
+ 
+diff --git a/db/schema_sqlite.rb b/db/schema_sqlite.rb
+index 00125d1..ee8d16b 100644
+--- a/db/schema_sqlite.rb
++++ b/db/schema_sqlite.rb
+@@ -10,7 +10,7 @@
+ #
+ # It's strongly recommended that you check this file into your version control system.
+ 
+-ActiveRecord::Schema[8.2].define(version: 2026_02_18_120000) do
++ActiveRecord::Schema[8.2].define(version: 2026_11_16_120000) do
+   create_table "accesses", id: :uuid, force: :cascade do |t|
+     t.datetime "accessed_at"
+     t.uuid "account_id", null: false
+@@ -229,7 +229,7 @@ ActiveRecord::Schema[8.2].define(version: 2026_02_18_120000) do
+     t.datetime "updated_at", null: false
+     t.index ["account_id", "last_active_at", "status"], name: "index_cards_on_account_id_and_last_active_at_and_status"
+     t.index ["account_id", "number"], name: "index_cards_on_account_id_and_number", unique: true
+-    t.index ["board_id"], name: "index_cards_on_board_id"
++    t.index ["board_id", "status", "last_active_at", "id"], name: "index_cards_for_entropy_sweep"
+     t.index ["column_id"], name: "index_cards_on_column_id"
+   end
+ 
+diff --git a/test/models/card/entropic_test.rb b/test/models/card/entropic_test.rb
+index 848cfa7..12940f8 100644
+--- a/test/models/card/entropic_test.rb
++++ b/test/models/card/entropic_test.rb
+@@ -69,6 +69,17 @@ class Card::EntropicTest < ActiveSupport::TestCase
+     assert_not_includes Card.postponing_soon, cards(:shipping)
+   end
+ 
++  test "auto postpone all due respects each board's entropy period" do
++    entropies(:writebook_board).update!(auto_postpone_period: 7.days)
++    cards(:logo).update!(last_active_at: 8.days.ago)
++    cards(:radio).update!(last_active_at: 8.days.ago)
++
++    Card.auto_postpone_all_due
++
++    assert cards(:logo).reload.postponed?
++    assert_not cards(:radio).reload.postponed?
++  end
++
+   test "auto postpone all due works properly cross-account" do
+     cards(:logo).update!(last_active_at: entropies(:writebook_board).auto_postpone_period.seconds.ago - 2.days)
+     cards(:radio).update!(last_active_at: entropies(:miltons_wish_list_board).auto_postpone_period.seconds.ago - 2.days)
+diff --git a/test/models/card/eventable/system_commenter_test.rb b/test/models/card/eventable/system_commenter_test.rb
+index 012dd4a..4953b9a 100644
+--- a/test/models/card/eventable/system_commenter_test.rb
++++ b/test/models/card/eventable/system_commenter_test.rb
+@@ -47,6 +47,14 @@ class Card::Eventable::SystemCommenterTest < ActiveSupport::TestCase
+     refute_includes html, "<em>Injected</em>"
+   end
+ 
++  test "auto-postponement system comments use the event creator" do
++    system_user = users(:system)
++
++    @card.auto_postpone(user: system_user)
++
++    assert_equal system_user, @card.comments.last.creator
++  end
++
+   test "don't notify on system comments" do
+     @card.watch_by(users(:david))
+ 

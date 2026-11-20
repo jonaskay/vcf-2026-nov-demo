@@ -1,0 +1,1 @@
+engagement[composer]: trajectories opened per arm: base=2, dom=3, inv=3; evidence.md read; 0 miss(es)

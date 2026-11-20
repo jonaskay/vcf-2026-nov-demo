@@ -1,0 +1,44 @@
+{
+  "trial": "ft-card-reactions__xos2916",
+  "task": "ft-card-reactions",
+  "agent": "harnessed-miniswen",
+  "model": "openai/gpt-6-luna#max",
+  "index": 1,
+  "profile_digest": "73116e4a943eabe1",
+  "task_digest": "b0a31985155a5266",
+  "revision": {
+    "commit": "f587d5a44897f3467af2a48c0503aef4eb6acf55",
+    "dirty": true
+  },
+  "lemans_version": "1.6.0",
+  "tags": [
+    "rails",
+    "active-record",
+    "action-controller",
+    "migrations",
+    "caching"
+  ],
+  "metadata": {
+    "category": "full-features"
+  },
+  "phases": [
+    {
+      "name": "environment_setup",
+      "started_at": "2026-11-16T23:47:03.555337Z",
+      "finished_at": "2026-11-16T23:47:11.483528Z"
+    },
+    {
+      "name": "agent",
+      "started_at": "2026-11-16T23:47:11.483564Z",
+      "finished_at": "2026-11-16T23:48:02.577593Z"
+    }
+  ],
+  "outcome": {
+    "name": "agent_error",
+    "scored": false,
+    "detail": "miniswen: the model call failed: Invalid prompt: your prompt was flagged as potentially violating our usage policy. Please try again with a different prompt: https://platform.openai.com/docs/guides/reasoning#advice-on-prompting: {\n  \"error\": {\n    \"message\": \"Invalid prompt: your prompt was flagged as potentially violating our usage policy. Please try again with a different prompt: https://platform.openai.com/docs/guides/reasoning#advice-on-prompting\",\n    \"type\": \"invalid_request_error\",\n    \"param\": null,\n    \"code\": \"invalid_prompt\"\n  }\n}"
+  },
+  "duration": 59.0,
+  "started_at": "2026-11-16T23:47:03Z",
+  "finished_at": "2026-11-16T23:48:02Z"
+}

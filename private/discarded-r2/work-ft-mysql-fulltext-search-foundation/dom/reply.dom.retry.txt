@@ -1,0 +1,9 @@
+<notes>
+**Validation fix.** The validator rejected the last proposal because `system.md` had a `## Skills` header and a blank line in addition to the skill's trigger line. I removed the header. The only change to `system.md` now is this trigger line, appended after the submit instruction:
+
+"When the request finds, filters or lists cards by their text (title, description, comments), or must limit cards to what a user may see, run `cat /opt/harness/skills/card-text-search/SKILL.md` and follow it."
+
+**What I didn't check.** I didn't have the original `system.md` to compare against, so I'm assuming the header was the only extra edit. Everything else in the file reads like the standard base text.
+
+**Proposal content is unchanged.** The proposal is still one component: the skill `skills/card-text-search/SKILL.md` plus that trigger line. The submit instruction (`echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`, run alone in its own command) is still in place. The skill's content and the trajectory evidence behind it are as described in the previous proposal's notes.
+</notes>

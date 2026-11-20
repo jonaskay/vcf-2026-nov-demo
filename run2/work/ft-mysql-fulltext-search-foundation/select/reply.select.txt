@@ -1,0 +1,8 @@
+<why>
+All nine add a working `/search?q=` page that limits results to published cards on boards the user can currently access. The deciding factor was fidelity to "matched words wrapped in `<mark>`". c03 splits the query into words, and a card matches only if every word appears in its title, description or a comment, in any order. Each word is then highlighted separately. c01, c02, c05, c07 and c09 treat the whole query as one phrase. c03 also loads matching comments in one query per page, through accessible published cards.
+The closest runner-up was c06, which matches words the same way. It lost because `matching_search_comments` runs a database query inside a view helper, once for each card on the page. c04 and c08 rely on helpers their patches don't show (`accessible_comments`, `format_excerpt`).
+</why>
+
+```choice
+c03
+```

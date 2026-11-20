@@ -1,0 +1,29 @@
+<notes>
+**Component changed:** `system.md` only. I replaced its generic "analyze / reproduce script / fix / verify" workflow with a time-boxed procedure and added a short "Workspace facts" block. No skill was added, no other file was touched, and the submit instruction is kept as step 8.
+
+**Why this component.** The three base runs disagreed on pacing and on when to stop, not on how to solve the problem:
+- r1 submitted at 31 min (67 steps) and r3 at 41 min (62 steps). Each wrote to the repository first at about minute 21–24, then ran tests and the full suite and submitted.
+- r2 hit the 90-minute limit (112 steps). Its first repository write was at step 51, 44 minutes in (r2 steps.tsv, 07:00 → 07:44). It had a working change with passing focused tests and rubocop at step 75, 53 minutes in.
+- After that r2 kept benchmarking:
+  - Two runner scripts were killed at the 300 s limit (r2 steps 79 and 81, exit 124), costing about 10 minutes.
+  - The full suite passed at step 83 (1542 runs, 0 failures, around minute 67). r2 then widened scope into `app/models/card/eventable/system_commenter.rb` and its test (steps 85–95).
+  - It went on comparing index orders and benchmark variants (steps 96–113) until the clock ran out.
+
+Since r1 and r3 already show the agent can finish, the cheapest fix is to tell it when to stop and how long things should take. The always-on file is where that applies to every run. This matches the system.md rewrite in the library's ft-notification-bundle-window-overlap harness: there it was adopted with verdict "helped", with all 3 runs writing by minute 6 and finishing in 21–34 min.
+
+**Edits and the moment behind each:**
+- **`date -u` checkpoints and minute marks** (first edit by about minute 25, everything implemented by about 55, only finishing up after about 75). r2's late first write at 44 min, against 21–24 min in r1 and r3.
+- **Step 4, bounded experiments.** Keep scripts in /tmp, start at 10,000 rows or fewer, wrap them in `timeout 120`, and set `STDOUT.sync`. Treat exit 124 as a timeout, not a code failure: shrink the input 10× and retry once, then drop the experiment. Motivated by r2 steps 79 and 81. Step 81 printed partial output only because r2 added `STDOUT.sync` itself; the rerun at 10k rows (step 82) took 0.16 s.
+- **Step 7, stop rule** (submit once the full suite, rubocop and diff review are clean; no new optimisations or other classes after that). r2 steps 84–113, which came after its green full suite at step 83.
+- **Step 6, check the diff for edits outside the request's scope.** r2's late `system_commenter.rb` change (steps 85–95).
+
+**Workspace facts, with sources (all from command output, none from patches):**
+- `rg` is missing: exit 127 in r1 step 4, r2 step 4 and r3 step 4.
+- Test commands: focused `RAILS_ENV=test bin/rails test test/models/card/entropic_test.rb` passed in r2 steps 21 and 75. The full suite `RAILS_ENV=test bin/rails test` printed "1542 runs … Finished in 19.58s" at r2 step 83.
+- The test database holds only fixtures: "accounts=3 cards=8" at r2 step 80.
+- `RAILS_ENV=test bin/rails db:migrate` changed only `db/schema_sqlite.rb` and `db/cable_schema.rb`, not `db/schema.rb`: `git status` at r2 step 60, and the cable_schema diff at r2 step 61. Both r2 (step 64) and r1 (step 56) then edited `db/schema.rb` by hand and reverted `cable_schema.rb`.
+- Plain `db:rollback` is refused in this multi-database app ("must run the namespaced task … db:rollback:primary") at r2 step 66.
+- Rolling back a migration that was edited after it was applied fails ("No indexes found on cards…") at r2 step 68.
+
+The facts block contains nothing about how to fix the entropy sweep itself (which query, which index, which files). That subject matter is left to the parallel candidate that owns it.
+</notes>

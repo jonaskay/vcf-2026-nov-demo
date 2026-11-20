@@ -1,0 +1,490 @@
+diff --git a/app/assets/stylesheets/cards.css b/app/assets/stylesheets/cards.css
+index 76f08fd..f91328a 100644
+--- a/app/assets/stylesheets/cards.css
++++ b/app/assets/stylesheets/cards.css
+@@ -378,6 +378,21 @@
+     }
+   }
+ 
++  /* Stalled status
++  /* ------------------------------------------------------------------------ */
++
++  .card__stalled {
++    align-self: flex-start;
++    background-color: oklch(var(--lch-yellow-lightest));
++    border: 1px solid oklch(var(--lch-yellow-light));
++    border-radius: 1em;
++    color: oklch(var(--lch-yellow-darkest));
++    font-size: var(--text-xx-small);
++    font-weight: 700;
++    padding: 0.25em 0.75em;
++    text-transform: uppercase;
++  }
++
+   /* Closed stamp
+   /* ------------------------------------------------------------------------ */
+ 
+diff --git a/app/models/card.rb b/app/models/card.rb
+index 57da45c..abc2db7 100644
+--- a/app/models/card.rb
++++ b/app/models/card.rb
+@@ -1,5 +1,5 @@
+ class Card < ApplicationRecord
+-  include Accessible, Assignable, Attachments, Broadcastable, Closeable, Colored, Commentable,
++  include Accessible, Assignable, Attachments, Broadcastable, Burstable, Closeable, Colored, Commentable,
+     Entropic, Eventable, Exportable, Golden, Mentions, Multistep, Pinnable, Postponable, Promptable,
+     Readable, Searchable, Statuses, Storage::Tracked, Taggable, Triageable, Watchable
+ 
+@@ -32,6 +32,7 @@ class Card < ApplicationRecord
+     when "maybe" then awaiting_triage
+     when "not_now" then postponed.latest
+     when "golden" then golden
++    when "stalled" then stalled
+     when "draft" then drafted
+     else all
+     end
+diff --git a/app/models/card/burstable.rb b/app/models/card/burstable.rb
+new file mode 100644
+index 0000000..6e1054b
+--- /dev/null
++++ b/app/models/card/burstable.rb
+@@ -0,0 +1,43 @@
++module Card::Burstable
++  extend ActiveSupport::Concern
++
++  BURST_COMMENT_COUNT = 3
++  STALLED_AFTER = 2.weeks
++
++  included do
++    scope :stalled, ->(as_of = Time.current) do
++      cutoff = as_of - STALLED_AFTER
++      where(last_burst_at: ..cutoff, last_active_at: ..cutoff)
++    end
++  end
++
++  def stalled?(as_of: Time.current)
++    cutoff = as_of - STALLED_AFTER
++    last_burst_at.present? && last_burst_at <= cutoff && last_active_at <= cutoff
++  end
++
++  # Stalled status changes with time even when the card is not updated.
++  def cache_key_with_version
++    if has_attribute?(:last_burst_at) && has_attribute?(:last_active_at)
++      "#{super}-#{stalled?}"
++    else
++      super
++    end
++  end
++
++  def record_comment_burst(comment)
++    burst_window = auto_postpone_period.seconds / 3
++    comments_in_window = comments.by_user
++      .where(created_at: (comment.created_at - burst_window)..comment.created_at)
++      .group(:creator_id)
++      .count
++
++    if comments_in_window.values.sum >= BURST_COMMENT_COUNT && comments_in_window.many?
++      record_burst(at: comment.created_at)
++    end
++  end
++
++  def record_burst(at: Time.current)
++    update!(last_burst_at: at) if last_burst_at.nil? || at > last_burst_at
++  end
++end
+diff --git a/app/models/card/eventable.rb b/app/models/card/eventable.rb
+index 9454465..1b659a7 100644
+--- a/app/models/card/eventable.rb
++++ b/app/models/card/eventable.rb
+@@ -12,6 +12,7 @@ module Card::Eventable
+   def event_was_created(event)
+     transaction do
+       create_system_comment_for(event)
++      record_burst(at: event.created_at) if event.action.card_assigned? || event.action.card_reopened?
+       touch_last_active_at unless was_just_published?
+     end
+   end
+diff --git a/app/models/comment/eventable.rb b/app/models/comment/eventable.rb
+index 7fe7abe..9fe8326 100644
+--- a/app/models/comment/eventable.rb
++++ b/app/models/comment/eventable.rb
+@@ -8,6 +8,7 @@ module Comment::Eventable
+   end
+ 
+   def event_was_created(event)
++    card.record_comment_burst(self)
+     card.touch_last_active_at
+   end
+ 
+diff --git a/app/models/filter/fields.rb b/app/models/filter/fields.rb
+index d2b7ff0..b5cac3f 100644
+--- a/app/models/filter/fields.rb
++++ b/app/models/filter/fields.rb
+@@ -1,7 +1,7 @@
+ module Filter::Fields
+   extend ActiveSupport::Concern
+ 
+-  INDEXES = %w[ all closed not_now postponing_soon golden ]
++  INDEXES = %w[ all closed not_now postponing_soon golden stalled ]
+   SORTED_BY = %w[ newest oldest latest ]
+ 
+   delegate :default_value?, to: :class
+diff --git a/app/views/cards/_card.json.jbuilder b/app/views/cards/_card.json.jbuilder
+index bccf51d..36e79b6 100644
+--- a/app/views/cards/_card.json.jbuilder
++++ b/app/views/cards/_card.json.jbuilder
+@@ -10,6 +10,7 @@ json.cache! card do
+   json.closed card.closed?
+   json.postponed card.postponed?
+   json.golden card.golden?
++  json.stalled card.stalled?
+   json.last_active_at card.last_active_at.utc
+   json.created_at card.created_at.utc
+ 
+diff --git a/app/views/cards/display/common/_stamp.html.erb b/app/views/cards/display/common/_stamp.html.erb
+index 86190e0..b30be87 100644
+--- a/app/views/cards/display/common/_stamp.html.erb
++++ b/app/views/cards/display/common/_stamp.html.erb
+@@ -1,3 +1,7 @@
++<% if card.stalled? %>
++  <span class="card__stalled">Stalled</span>
++<% end %>
++
+ <% if card.postponed? %>
+   <%= tag.div class: token_list("card__closed", "card__closed--system": card.postponed_by&.system?), data: {
+     controller: "bridge--stamp",
+diff --git a/db/migrate/20261117185225_add_burst_tracking_to_cards.rb b/db/migrate/20261117185225_add_burst_tracking_to_cards.rb
+new file mode 100644
+index 0000000..f060df9
+--- /dev/null
++++ b/db/migrate/20261117185225_add_burst_tracking_to_cards.rb
+@@ -0,0 +1,7 @@
++class AddBurstTrackingToCards < ActiveRecord::Migration[8.2]
++  def change
++    add_column :cards, :last_burst_at, :datetime
++    add_index :cards, [ :account_id, :status, :last_burst_at, :last_active_at ], name: "index_cards_for_stalled_cards"
++    add_index :comments, [ :card_id, :created_at ], name: "index_comments_on_card_id_and_created_at"
++  end
++end
+diff --git a/db/schema.rb b/db/schema.rb
+index 4cfab83..57d49e6 100644
+--- a/db/schema.rb
++++ b/db/schema.rb
+@@ -10,7 +10,7 @@
+ #
+ # It's strongly recommended that you check this file into your version control system.
+ 
+-ActiveRecord::Schema[8.2].define(version: 2026_07_09_120000) do
++ActiveRecord::Schema[8.2].define(version: 2026_11_17_185225) do
+   create_table "accesses", id: :uuid, charset: "utf8mb4", collation: "utf8mb4_0900_ai_ci", force: :cascade do |t|
+     t.datetime "accessed_at"
+     t.uuid "account_id", null: false
+@@ -218,9 +218,11 @@ ActiveRecord::Schema[8.2].define(version: 2026_07_09_120000) do
+     t.string "status", default: "drafted", null: false
+     t.string "title"
+     t.datetime "updated_at", null: false
++    t.datetime "last_burst_at"
+     t.index ["account_id", "board_id", "status"], name: "index_cards_on_account_id_and_board_id_and_status"
+     t.index ["account_id", "last_active_at", "status"], name: "index_cards_on_account_id_and_last_active_at_and_status"
+     t.index ["account_id", "number"], name: "index_cards_on_account_id_and_number", unique: true
++    t.index ["account_id", "status", "last_burst_at", "last_active_at"], name: "index_cards_for_stalled_cards"
+     t.index ["board_id"], name: "index_cards_on_board_id"
+     t.index ["column_id"], name: "index_cards_on_column_id"
+   end
+@@ -264,6 +266,7 @@ ActiveRecord::Schema[8.2].define(version: 2026_07_09_120000) do
+     t.uuid "creator_id", null: false
+     t.datetime "updated_at", null: false
+     t.index ["account_id"], name: "index_comments_on_account_id"
++    t.index ["card_id", "created_at"], name: "index_comments_on_card_id_and_created_at"
+     t.index ["card_id"], name: "index_comments_on_card_id"
+   end
+ 
+diff --git a/db/schema_sqlite.rb b/db/schema_sqlite.rb
+index 17722f9..ef7da88 100644
+--- a/db/schema_sqlite.rb
++++ b/db/schema_sqlite.rb
+@@ -10,7 +10,7 @@
+ #
+ # It's strongly recommended that you check this file into your version control system.
+ 
+-ActiveRecord::Schema[8.2].define(version: 2026_07_09_120000) do
++ActiveRecord::Schema[8.2].define(version: 2026_11_17_185225) do
+   create_table "accesses", id: :uuid, force: :cascade do |t|
+     t.datetime "accessed_at"
+     t.uuid "account_id", null: false
+@@ -218,9 +218,11 @@ ActiveRecord::Schema[8.2].define(version: 2026_07_09_120000) do
+     t.string "status", limit: 255, default: "drafted", null: false
+     t.string "title", limit: 255
+     t.datetime "updated_at", null: false
++    t.datetime "last_burst_at"
+     t.index ["account_id", "board_id", "status"], name: "index_cards_on_account_id_and_board_id_and_status"
+     t.index ["account_id", "last_active_at", "status"], name: "index_cards_on_account_id_and_last_active_at_and_status"
+     t.index ["account_id", "number"], name: "index_cards_on_account_id_and_number", unique: true
++    t.index ["account_id", "status", "last_burst_at", "last_active_at"], name: "index_cards_for_stalled_cards"
+     t.index ["board_id"], name: "index_cards_on_board_id"
+     t.index ["column_id"], name: "index_cards_on_column_id"
+   end
+@@ -264,6 +266,7 @@ ActiveRecord::Schema[8.2].define(version: 2026_07_09_120000) do
+     t.uuid "creator_id", null: false
+     t.datetime "updated_at", null: false
+     t.index ["account_id"], name: "index_comments_on_account_id"
++    t.index ["card_id", "created_at"], name: "index_comments_on_card_id_and_created_at"
+     t.index ["card_id"], name: "index_comments_on_card_id"
+   end
+ 
+diff --git a/docs/api/sections/activities.md b/docs/api/sections/activities.md
+index 33bf1bf..41dd787 100644
+--- a/docs/api/sections/activities.md
++++ b/docs/api/sections/activities.md
+@@ -80,6 +80,7 @@ __Response:__
+       "closed": true,
+       "postponed": false,
+       "golden": false,
++      "stalled": false,
+       "last_active_at": "2026-03-25T15:11:04.000Z",
+       "created_at": "2026-03-25T09:00:00.000Z",
+       "url": "http://app.fizzy.localhost:3006/897362094/cards/42"
+diff --git a/docs/api/sections/cards.md b/docs/api/sections/cards.md
+index 800ed82..f8e147a 100644
+--- a/docs/api/sections/cards.md
++++ b/docs/api/sections/cards.md
+@@ -44,6 +44,7 @@ __Response:__
+     "has_attachments": false,
+     "tags": ["programming"],
+     "golden": false,
++    "stalled": false,
+     "last_active_at": "2025-12-05T19:38:48.553Z",
+     "created_at": "2025-12-05T19:38:48.540Z",
+     "url": "http://app.fizzy.localhost:3006/897362094/cards/4",
+@@ -98,6 +99,7 @@ __Response:__
+   "tags": ["programming"],
+   "closed": false,
+   "golden": false,
++  "stalled": false,
+   "last_active_at": "2025-12-05T19:38:48.553Z",
+   "created_at": "2025-12-05T19:38:48.540Z",
+   "url": "http://app.fizzy.localhost:3006/897362094/cards/4",
+diff --git a/docs/api/sections/columns.md b/docs/api/sections/columns.md
+index 481ad50..da7d9cc 100644
+--- a/docs/api/sections/columns.md
++++ b/docs/api/sections/columns.md
+@@ -68,6 +68,7 @@ __Response:__
+     "closed": false,
+     "postponed": false,
+     "golden": false,
++    "stalled": false,
+     "last_active_at": "2025-12-05T19:38:48.553Z",
+     "created_at": "2025-12-05T19:38:48.540Z",
+     "url": "http://fizzy.localhost:3006/897362094/cards/4",
+diff --git a/docs/api/sections/pins.md b/docs/api/sections/pins.md
+index ec22df5..df9e2ce 100644
+--- a/docs/api/sections/pins.md
++++ b/docs/api/sections/pins.md
+@@ -37,6 +37,7 @@ __Response:__
+     "has_attachments": false,
+     "tags": ["programming"],
+     "golden": false,
++    "stalled": false,
+     "last_active_at": "2025-12-05T19:38:48.553Z",
+     "created_at": "2025-12-05T19:38:48.540Z",
+     "url": "http://app.fizzy.localhost:3006/897362094/cards/4",
+diff --git a/test/controllers/cards_controller_test.rb b/test/controllers/cards_controller_test.rb
+index 6c8f375..f16f8a8 100644
+--- a/test/controllers/cards_controller_test.rb
++++ b/test/controllers/cards_controller_test.rb
+@@ -36,6 +36,29 @@ class CardsControllerTest < ActionDispatch::IntegrationTest
+     assert_equal [ cards(:buy_domain).number ], @response.parsed_body.pluck("number")
+   end
+ 
++  test "index can filter by stalled cards" do
++    card = cards(:logo)
++    inactive_since = 3.weeks.ago.change(usec: 0)
++    card.update!(last_burst_at: inactive_since, last_active_at: inactive_since)
++
++    get cards_path, params: { indexed_by: "stalled" }
++    assert_response :success
++
++    assert_select ".card__stalled", text: "Stalled"
++  end
++
++  test "index as JSON can filter by stalled cards" do
++    card = cards(:logo)
++    inactive_since = 3.weeks.ago.change(usec: 0)
++    card.update!(last_burst_at: inactive_since, last_active_at: inactive_since)
++
++    get cards_path(format: :json), params: { indexed_by: "stalled" }
++    assert_response :success
++
++    assert_equal [ card.number ], @response.parsed_body.pluck("number")
++    assert @response.parsed_body.first["stalled"]
++  end
++
+   test "create a new draft" do
+     assert_difference -> { Card.count }, 1 do
+       post board_cards_path(boards(:writebook))
+@@ -63,6 +86,17 @@ class CardsControllerTest < ActionDispatch::IntegrationTest
+     assert_redirected_to card_draft_path(card)
+   end
+ 
++  test "show marks a stalled card" do
++    card = cards(:logo)
++    inactive_since = 3.weeks.ago.change(usec: 0)
++    card.update!(last_burst_at: inactive_since, last_active_at: inactive_since)
++
++    get card_path(card)
++    assert_response :success
++
++    assert_select ".card__stalled", text: "Stalled"
++  end
++
+   test "show renders assign-to-me hotkey using self assignment path" do
+     card = cards(:logo)
+ 
+diff --git a/test/models/card/burstable_test.rb b/test/models/card/burstable_test.rb
+new file mode 100644
+index 0000000..b7ff4cb
+--- /dev/null
++++ b/test/models/card/burstable_test.rb
+@@ -0,0 +1,142 @@
++require "test_helper"
++
++class Card::BurstableTest < ActiveSupport::TestCase
++  setup do
++    Current.session = sessions(:david)
++  end
++
++  test "three comments from two people within a third of the auto-close period create a burst" do
++    card = create_published_card
++    now = Time.current.change(usec: 0)
++
++    create_comment(card, users(:david), at: now - 20.days)
++    create_comment(card, users(:david), at: now - 10.days)
++    assert_nil card.reload.last_burst_at
++
++    create_comment(card, users(:kevin), at: now)
++
++    assert_equal now, card.reload.last_burst_at
++  end
++
++  test "system comments do not count toward a burst" do
++    card = create_published_card
++    now = Time.current.change(usec: 0)
++
++    create_comment(card, users(:david), at: now - 2.days)
++    create_comment(card, users(:system), at: now - 1.day - 12.hours)
++    create_comment(card, users(:david), at: now - 1.day)
++    create_comment(card, users(:david), at: now)
++
++    assert_nil card.reload.last_burst_at
++  end
++
++  test "board auto-close period determines the comment window" do
++    card = create_published_card
++    card.board.entropy.update!(auto_postpone_period: 3.days)
++    now = Time.current.change(usec: 0)
++
++    create_comment(card, users(:david), at: now - 2.days)
++    create_comment(card, users(:david), at: now - 12.hours)
++    create_comment(card, users(:kevin), at: now)
++
++    assert_nil card.reload.last_burst_at
++  end
++
++  test "comments from only one person do not create a burst" do
++    card = create_published_card
++    now = Time.current.change(usec: 0)
++
++    3.times { |index| create_comment(card, users(:david), at: now - index.days) }
++
++    assert_nil card.reload.last_burst_at
++  end
++
++  test "comments outside the burst window do not count" do
++    card = create_published_card
++    now = Time.current.change(usec: 0)
++
++    create_comment(card, users(:david), at: now - 31.days)
++    create_comment(card, users(:david), at: now - 1.day)
++    create_comment(card, users(:kevin), at: now)
++
++    assert_nil card.reload.last_burst_at
++  end
++
++  test "assignment and reopening create a burst" do
++    card = create_published_card
++    assigned_at = Time.current.change(usec: 0)
++
++    travel_to assigned_at do
++      card.toggle_assignment(users(:kevin))
++    end
++
++    assert_equal assigned_at, card.reload.last_burst_at
++
++    card.close
++    reopened_at = 1.day.from_now.change(usec: 0)
++    travel_to reopened_at do
++      card.reopen
++    end
++
++    assert_equal reopened_at, card.reload.last_burst_at
++  end
++
++  test "a card without a burst is not stalled" do
++    card = create_published_card
++    card.update!(last_active_at: 3.weeks.ago)
++
++    assert_not card.stalled?
++  end
++
++  test "a recent burst is not stalled even if the activity timestamp is older" do
++    card = create_published_card
++    card.update!(last_burst_at: Time.current, last_active_at: 3.weeks.ago)
++
++    assert_not card.stalled?
++  end
++
++  test "a burst card is stalled after two inactive weeks and activity resets it" do
++    card = create_published_card
++    inactive_since = 3.weeks.ago.change(usec: 0)
++    card.update!(last_burst_at: inactive_since, last_active_at: inactive_since)
++
++    assert card.stalled?
++
++    create_comment(card, users(:kevin), at: Time.current)
++
++    assert_not card.reload.stalled?
++  end
++
++  test "cache key changes when a card becomes stalled without an update" do
++    card = create_published_card
++    as_of = Time.current.change(usec: 0)
++    inactive_since = as_of - 2.weeks + 1.second
++    card.update!(last_burst_at: inactive_since, last_active_at: inactive_since)
++    fresh_cache_key = card.cache_key_with_version
++
++    travel_to as_of + 1.second do
++      assert card.stalled?
++      assert_not_equal fresh_cache_key, card.cache_key_with_version
++    end
++  end
++
++  test "stalled cards can be selected with the stalled index" do
++    card = create_published_card
++    inactive_since = 3.weeks.ago.change(usec: 0)
++    card.update!(last_burst_at: inactive_since, last_active_at: inactive_since)
++    filter = users(:david).filters.new(indexed_by: "stalled")
++
++    assert_includes filter.cards, card
++  end
++
++  private
++    def create_published_card
++      boards(:writebook).cards.create!(creator: users(:david), title: "Card with a burst", status: "published")
++    end
++
++    def create_comment(card, creator, at:)
++      travel_to at do
++        card.comments.create!(creator: creator, body: "Activity")
++      end
++    end
++end

@@ -1,0 +1,25 @@
+<notes>
+I made one change: a new triggered skill, `skills/db-migration/SKILL.md`, plus its trigger line in `system.md` (line 15). I adapted it from the `ft-card-reactions` library skill and re-checked every workspace fact in it against these trajectories. The submit instruction in `system.md` is unchanged.
+
+**Why this change.** All 3 base runs needed a migration (`last_burst_at` on cards). Two of the three hit the same concrete failure in the same order:
+- **r1, steps 79–85 (about minute 51):** r1 added an index to a migration that had already run and hand-edited `db/schema_sqlite.rb` (step 81). It then ran an unscoped `db:rollback`, which failed with "You're using a multiple database application" (r1 step 81). Next it ran `db:rollback:primary`, which failed with "No indexes found on comments" (step 82) because the edited file now removed an index the database never had. It worked around this with a second migration (step 84) and ended with `db/schema.rb` and `db/schema_sqlite.rb` on different versions (step 84 output: 2026_11_16_120000 vs 2026_11_16_130000). It fixed that by hand at step 87.
+- **r2, steps 80–85 (about minute 54):** same pattern. It added an index to a migration that had already run. Unscoped rollback failed (step 82), the scoped rollback failed with "No indexes found on cards" (step 83), and `rails runner add_index` failed (step 84). Only the third workaround succeeded (step 85).
+
+The new skill section "Changing a migration that has already run" (roll back before editing; no `runner` patching; no second migration as a workaround) targets exactly this. Procedure step 1 ("settle every column and index before you migrate") targets its cause. The scoped `:primary` commands remove the unscoped failure. This is a narrow multi-step procedure with a clear trigger, so it costs nothing in runs that don't add a migration.
+
+**Workspace facts, each re-checked here:**
+- **Several databases, and the unscoped rollback fails:** the error text in r1 step 81 and r2 step 82. `config/database.sqlite.yml` shows `primary` + `cable` and `schema_dump: schema_sqlite.rb` (r2 step 31).
+- **`db:migrate` rewrites `db/cable_schema.rb`:** the git diff in r2 step 31 (charset/collation removed, `size: :long` → `limit:`). r2 step 83 and r3 steps 82–83 had to revert it.
+- **`db:migrate` does not update `db/schema.rb`:** r1 step 84 output shows the version mismatch above. All 3 runs edited `db/schema.rb` by hand (r1 step 87, r2 step 88, r3 steps 79–80).
+- **`Migration[8.2]`:** the existing migration file shown in r2 step 31. I wrote the command `date -u +%Y%m%d%H%M%S` rather than a literal version, following the library lesson. r1 ran `date` (step 51) and still used the round 20261116120000.
+- **Full suite size and time:** r2 step 91 ran 1539 runs in 22.0 s, exit 0. The claim that a development `db:migrate` is enough for tests rests on r1 running only `bin/rails db:migrate` (steps 52, 84) and then the full suite at step 113, exit 0.
+- **Dropped from the library copy:** the no-foreign-key/uuid fact. It was not seen in these trajectories and is not relevant to this request.
+
+**Seen but deliberately left alone** (one component per proposal):
+- No run timed out, but they ran 66–77 minutes, and the first repo writes came at about minutes 23, 25 and 37.
+- Debug `warn` lines were inserted and later removed: r1 step 71, r3 steps 53–59.
+- Non-idempotent ruby edit scripts reran and duplicated test blocks: r2 steps 36–42.
+- Scope grew beyond the request: data-transfer changes in r1 and r2, controller etags in r2.
+
+The clock-anchored `system.md` rewrite from the `ft-notification-bundle-window-overlap` library entry is the obvious next candidate if timing becomes the binding constraint.
+</notes>

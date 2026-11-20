@@ -1,0 +1,8 @@
+compose
+{"subtype":"success","cost_usd":0.462438,"turns":16}
+tool calls:
+   2 Edit
+  13 Read
+distinct files read: 13
+audit: clean
+engagement[composer]: trajectories opened per arm: base=1, dom=1, inv=3; evidence.md read; 0 miss(es)

@@ -1,0 +1,1 @@
+Not rolled out again: the adopted harness is identical to the inv candidate, so that candidate's rollouts in context/candidates/inv/rollouts/ are its evidence.

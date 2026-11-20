@@ -1,0 +1,81 @@
+diff -ruN -x .keep base_harness/skills/card-state-and-index/SKILL.md candidates/dom/harness/skills/card-state-and-index/SKILL.md
+--- base_harness/skills/card-state-and-index/SKILL.md	1970-01-01 02:00:00
++++ candidates/dom/harness/skills/card-state-and-index/SKILL.md	2026-11-17 22:00:24
+@@ -0,0 +1,65 @@
++# Card state, badge and `indexed_by` list (Fizzy)
++
++Use this when a request adds a state that cards can be in (shown on the card and/or listed through `cards?indexed_by=<name>`), or changes what counts as card activity. Names, thresholds and labels come from the request (re-read it). Do not rename them. Lines marked "in this workspace" were checked in this checkout. Anything else is procedure.
++
++## 1. Model: the state is a Card concern with a scope and a matching predicate
++- In this workspace, card states are concerns in `app/models/card/*.rb`, listed alphabetically in the `include` line at the top of `app/models/card.rb`. Templates to copy:
++  - `Card::Golden`: a scope plus a `golden?` predicate.
++  - `Card::Entropic`: the `postponing_soon` scope, which depends on time and on the board's period.
++  - `Card::Postponable`: `postponed` / `active` scopes plus predicates.
++- CONTRACT: the scope and the predicate must give the same answer, including at the exact boundary (`<=` against `..t`) and for nil columns. Write one test that checks both sides of the boundary for both the scope and the predicate.
++- If a state depends on elapsed time, compute it at read time from stored timestamps. A stored boolean would need a job to flip it.
++
++## 2. Activity: what already resets "last activity" (in this workspace)
++- `cards.last_active_at` is the activity clock. `Card#touch_last_active_at` (app/models/card/eventable.rb) does `update!(last_active_at: Time.current)`. These callers use it:
++  - `Card::Eventable#event_was_created`, after every card event (`Event` has `after_create -> { eventable.event_was_created(self) }`). It skips the call `unless was_just_published?`.
++  - `Comment::Eventable#event_was_created`. Only non-system comments create events (`should_track_event? = !creator.system?`).
++  - `Reaction` `after_create :register_card_activity`.
++- Event actions are `"card_<verb>"`, read with `event.action.card_assigned?`, `card_reopened?` and so on. `Card::Assignable#assign` tracks `:assigned`. `Card::Closeable#reopen` tracks `:reopened` only if the card was closed. `Card::Postponable#postpone` and `#resume` call `reopen`.
++- PITFALL, `was_just_published`: it is an `attr_accessor` set in `before_save` (app/models/card/statuses.rb) and never cleared. A card object created as published therefore skips `touch_last_active_at` for every later event on that same object. Do NOT reset the flag: `test/models/card/statuses_test.rb:54,65` and `test/models/concerns/mentions_test.rb:17` depend on it. A narrower condition such as `unless was_just_published? && event.action.card_published?` keeps those tests green.
++- `Card::Eventable::SystemCommenter` creates a system-user comment for assigned, reopened, closed and other events. To count people's comments, use `Comment.by_user` (and `by_system` for the opposite), defined in app/models/comment.rb.
++- A comment's `created_at` can be set by the client (`Cards::CommentsController` permits `created_at`). Time windows over comments should use comment timestamps, not `Time.current`.
++- "Auto-close period" in this workspace is the board's `auto_postpone_period`, in seconds. `Card` delegates it to the board (app/models/card/entropic.rb). The board falls back to the account entropy (app/models/board/entropic.rb). Fixture values are in test/fixtures/entropies.yml.
++
++## 3. Listing: every place an index name must appear (in this workspace)
++- `Card.indexed_by` case statement in app/models/card.rb.
++- `Filter::Fields::INDEXES` in app/models/filter/fields.rb. The label comes from `indexed_by_human_name`, which falls back to `humanize`.
++- `Filter#cards` (app/models/filter.rb) drops closed cards unless `include_closed_cards?` and Not Now cards unless `include_not_now_cards?`. DECIDE whether the new list includes closed or postponed cards, and state that choice in a test. The base runs split on this.
++- The shortcut links in app/views/my/menus/_shortcuts.html.erb point to `cards_path(indexed_by: :golden)` and `:postponing_soon`. Also look at app/views/filters/settings/_indexed_by.html.erb.
++
++## 4. Display: where a card is shown (in this workspace)
++- `cards/display/common/_stamp.html.erb` is rendered by `cards/display/_preview`, `cards/display/_public_preview` and `public/cards/show`. Before relying on it for the card page, check with `grep -rn 'common/stamp' app/views` whether `cards/_container` reaches it.
++- These surfaces show a card but do NOT go through the preview or stamp partials:
++  - `notifications/notification/_header.html.erb`
++  - `events/event/_layout.html.erb` (the day timeline)
++  - `searches/_result.html.erb`
++  - `prompts/cards/_card.html.erb`
++  `my/pins/_pin` renders `cards/display/preview`.
++- `CardsHelper#card_article_tag` adds state classes (`golden-effect`, `card--postponed`, `card--active`). Card styles live in app/assets/stylesheets/cards.css.
++- JSON: `cards/_card.json.jbuilder` (`closed` / `postponed` / `golden` booleans) and the `card` block in `notifications/_notification.json.jbuilder`. The card JSON is documented in docs/api/sections/cards.md.
++
++## 5. Caching: a state that changes with the clock alone does not touch `updated_at`
++In this workspace, these keys will NOT change when time passes:
++- collection `cached: true` (`cards/display/_previews`, `_public_previews`, `cards/previews/index.turbo_stream`, `public/boards/card_previews/index.turbo_stream`, the notifications lists and trays, the `events/day_timeline` columns)
++- `<% cache card do %>` (`cards/_container`, `cards/drafts/_container`)
++- `json.cache! card` and `cache notification` / `json.cache! notification`
++- HTTP `fresh_when etag: @page.records` (`boards/columns_controller`, `boards/columns/{cards,streams,not_nows,closeds}_controller`, `boards_controller`) and `my/pins_controller`
++
++Only 1 of 3 base runs found the etag sites. If the state can flip purely with time, pick ONE way to put it in the key, apply it at every site above that renders it, and prove it with a `travel` test (a fragment that re-renders, or a 304 that must not happen).
++
++## 6. Schema, if a column is needed (in this workspace)
++- Two schema files are kept: db/schema_sqlite.rb (written by `bin/rails db:migrate`) and db/schema.rb (MySQL; edit it by hand to match, version line included). `db:migrate` also dirties db/cable_schema.rb, so revert it with `git checkout -- db/cable_schema.rb`. Rollback needs `bin/rails db:rollback:primary`; plain `db:rollback` fails. Take the timestamp from `date +%Y%m%d%H%M%S`.
++- Decide on every column and index before the first migrate. Two base runs lost several steps re-migrating after adding an index late.
++- Account export/import: `Account::DataTransfer::RecordSet#check_record` treats every `model.column_names` entry as required, so an archive exported before the new column fails its check. No existing test covers this, and the runs split. If you handle it, keep it small and add one test.
++
++## 7. Tests and done check
++- Model tests go in `test/models/card/<concern>_test.rb` with `setup { Current.session = sessions(:david) }`, as in test/models/card/eventable_test.rb. Fixtures: `cards(:logo, :layout, :text, :shipping, :buy_domain)` (all `last_active_at` 1 week ago, `shipping` is closed), `boards(:writebook)`, `users(:david, :jz, :kevin, :system)`.
++- Controller tests: `test/controllers/cards_controller_test.rb` has the index/show HTML and JSON tests. The full suite (`bin/rails test`, about 1,540 tests in about 20 s) is cheap, so run it.
++- Before finishing, confirm:
++  - [ ] the scope and the predicate agree at the boundary
++  - [ ] every activity source (card event, user comment, reaction) both triggers and resets as the request says, tested on the same in-memory object right after `create!`
++  - [ ] the index is wired in all places in §3
++  - [ ] the badge appears on every surface in §4 that the request covers
++  - [ ] every cache or etag site in §5 that renders the state includes it
++  - [ ] the JSON key is added
++  - [ ] if migrated, both schema files are updated and cable_schema.rb is reverted
+diff -ruN -x .keep base_harness/system.md candidates/dom/harness/system.md
+--- base_harness/system.md	2026-11-17 22:00:24
++++ candidates/dom/harness/system.md	2026-11-17 22:00:24
+@@ -4,6 +4,8 @@
+ 
+ This workflow should be done step-by-step so that you can iterate on your changes and any possible problems.
+ 
++When the request adds a card state, flag, badge or `indexed_by` list, or changes what counts as card activity, run `cat /opt/harness/skills/card-state-and-index/SKILL.md` and follow it.
++
+ 1. Analyze the codebase by finding and reading relevant files
+ 2. Create a script to reproduce the issue
+ 3. Edit the source code to resolve the issue

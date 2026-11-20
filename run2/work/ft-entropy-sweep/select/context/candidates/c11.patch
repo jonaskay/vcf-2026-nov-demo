@@ -1,0 +1,93 @@
+diff --git a/app/models/card/entropic.rb b/app/models/card/entropic.rb
+index ebaad78..3b21bda 100644
+--- a/app/models/card/entropic.rb
++++ b/app/models/card/entropic.rb
+@@ -3,11 +3,15 @@ module Card::Entropic
+ 
+   included do
+     scope :due_to_be_postponed, -> do
++      now = Time.now
++      earliest_due_at = now - Entropy::AUTO_POSTPONE_PERIODS_IN_SECONDS.min
++
+       active
+         .joins(board: :account)
+         .left_outer_joins(board: :entropy)
+         .joins("LEFT OUTER JOIN entropies AS account_entropies ON account_entropies.account_id = accounts.id AND account_entropies.container_type = 'Account' AND account_entropies.container_id = accounts.id")
+-        .where("last_active_at <= #{connection.date_subtract('?', 'COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period)')}", Time.now)
++        .where("cards.last_active_at <= ?", earliest_due_at)
++        .where("last_active_at <= #{connection.date_subtract('?', 'COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period)')}", now)
+     end
+ 
+     scope :postponing_soon, -> do
+diff --git a/db/migrate/20261118072000_add_status_and_last_active_at_index_to_cards.rb b/db/migrate/20261118072000_add_status_and_last_active_at_index_to_cards.rb
+new file mode 100644
+index 0000000..758698e
+--- /dev/null
++++ b/db/migrate/20261118072000_add_status_and_last_active_at_index_to_cards.rb
+@@ -0,0 +1,5 @@
++class AddStatusAndLastActiveAtIndexToCards < ActiveRecord::Migration[8.2]
++  def change
++    add_index :cards, [ :status, :last_active_at ]
++  end
++end
+diff --git a/db/schema.rb b/db/schema.rb
+index 99e6be9..f4a89a4 100644
+--- a/db/schema.rb
++++ b/db/schema.rb
+@@ -10,7 +10,7 @@
+ #
+ # It's strongly recommended that you check this file into your version control system.
+ 
+-ActiveRecord::Schema[8.2].define(version: 2026_02_18_120000) do
++ActiveRecord::Schema[8.2].define(version: 2026_11_18_072000) do
+   create_table "accesses", id: :uuid, charset: "utf8mb4", collation: "utf8mb4_0900_ai_ci", force: :cascade do |t|
+     t.datetime "accessed_at"
+     t.uuid "account_id", null: false
+@@ -231,6 +231,7 @@ ActiveRecord::Schema[8.2].define(version: 2026_02_18_120000) do
+     t.index ["account_id", "number"], name: "index_cards_on_account_id_and_number", unique: true
+     t.index ["board_id"], name: "index_cards_on_board_id"
+     t.index ["column_id"], name: "index_cards_on_column_id"
++    t.index ["status", "last_active_at"], name: "index_cards_on_status_and_last_active_at"
+   end
+ 
+   create_table "closers_filters", id: false, charset: "utf8mb4", collation: "utf8mb4_0900_ai_ci", force: :cascade do |t|
+diff --git a/db/schema_sqlite.rb b/db/schema_sqlite.rb
+index 00125d1..918931e 100644
+--- a/db/schema_sqlite.rb
++++ b/db/schema_sqlite.rb
+@@ -10,7 +10,7 @@
+ #
+ # It's strongly recommended that you check this file into your version control system.
+ 
+-ActiveRecord::Schema[8.2].define(version: 2026_02_18_120000) do
++ActiveRecord::Schema[8.2].define(version: 2026_11_18_072000) do
+   create_table "accesses", id: :uuid, force: :cascade do |t|
+     t.datetime "accessed_at"
+     t.uuid "account_id", null: false
+@@ -231,6 +231,7 @@ ActiveRecord::Schema[8.2].define(version: 2026_02_18_120000) do
+     t.index ["account_id", "number"], name: "index_cards_on_account_id_and_number", unique: true
+     t.index ["board_id"], name: "index_cards_on_board_id"
+     t.index ["column_id"], name: "index_cards_on_column_id"
++    t.index ["status", "last_active_at"], name: "index_cards_on_status_and_last_active_at"
+   end
+ 
+   create_table "closers_filters", id: false, force: :cascade do |t|
+diff --git a/test/models/card/entropic_test.rb b/test/models/card/entropic_test.rb
+index 848cfa7..57da31f 100644
+--- a/test/models/card/entropic_test.rb
++++ b/test/models/card/entropic_test.rb
+@@ -85,4 +85,14 @@ class Card::EntropicTest < ActiveSupport::TestCase
+ 
+     assert_equal(cards(:logo, :radio).to_set, Card.postponing_soon.to_set)
+   end
++
++  test "due cards are searched by status and last active time on SQLite" do
++    skip "SQLite-specific query plan" unless Fizzy.db_adapter.sqlite?
++
++    relation = Card.due_to_be_postponed.order("cards.id ASC").limit(1_000)
++    plan = Card.connection.execute("EXPLAIN QUERY PLAN #{relation.to_sql}")
++    details = plan.map { |step| step["detail"] }
++
++    assert_includes details, "SEARCH cards USING INDEX index_cards_on_status_and_last_active_at (status=? AND last_active_at<?)"
++  end
+ end

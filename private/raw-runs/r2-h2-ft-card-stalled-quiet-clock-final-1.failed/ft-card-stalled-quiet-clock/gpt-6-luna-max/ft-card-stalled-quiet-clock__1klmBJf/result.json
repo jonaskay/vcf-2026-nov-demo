@@ -1,0 +1,43 @@
+{
+  "trial": "ft-card-stalled-quiet-clock__1klmBJf",
+  "task": "ft-card-stalled-quiet-clock",
+  "agent": "harnessed-miniswen",
+  "model": "openai/gpt-6-luna#max",
+  "index": 1,
+  "profile_digest": "73116e4a943eabe1",
+  "task_digest": "090fef337290aa0f",
+  "revision": {
+    "commit": "f587d5a44897f3467af2a48c0503aef4eb6acf55",
+    "dirty": true
+  },
+  "lemans_version": "1.6.0",
+  "tags": [
+    "rails",
+    "active-record",
+    "active-job",
+    "callbacks"
+  ],
+  "metadata": {
+    "category": "full-features"
+  },
+  "phases": [
+    {
+      "name": "environment_setup",
+      "started_at": "2026-11-17T16:46:16.843272Z",
+      "finished_at": "2026-11-17T16:46:23.956507Z"
+    },
+    {
+      "name": "agent",
+      "started_at": "2026-11-17T16:46:23.956540Z",
+      "finished_at": "2026-11-17T16:55:03.895310Z"
+    }
+  ],
+  "outcome": {
+    "name": "agent_error",
+    "scored": false,
+    "detail": "miniswen: the model call failed: You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.: {\n  \"error\": {\n    \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n    \"type\": \"insufficient_quota\",\n    \"param\": null,\n    \"code\": \"credit_balance_exhausted\"\n  }\n}"
+  },
+  "duration": 527.1,
+  "started_at": "2026-11-17T16:46:16Z",
+  "finished_at": "2026-11-17T16:55:03Z"
+}

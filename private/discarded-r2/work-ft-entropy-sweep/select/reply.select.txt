@@ -1,0 +1,22 @@
+I recommend c01. The request is an incident report with no named methods, so I judged on whether each patch keeps the existing postponement rules, actually speeds up the sweep, and would pass the project's checks as delivered. I read the patches only; I didn't run any tests or tools.
+
+- **Why c01:** It keeps the exact existing filter (the board's period wins, otherwise the account's). It adds a cheap pre-check using the smallest period actually stored in the database, so cards outside the hard-coded list of choices are still swept. It walks the cards in the same order as the existing account/activity index, so SQLite can follow that index. It also updates the security scanner's ignore file (`brakeman.ignore`) for the changed query, and its tests cover the boundary cases and the query plan.
+- **What it costs:** A harmless filter that only exists to steer SQLite onto the index, and an unneeded bump of the scanner version recorded in that ignore file.
+
+Why the others lost:
+- **c08 (runner-up):** The cleanest per-account version, but it changes the query the scanner has already approved and doesn't update `brakeman.ignore`, so the scanner check would probably fail on merge.
+- **c12:** Updates the ignore file, but walks cards by id, so each batch re-reads that account's whole range of stale cards.
+- **c02, c03, c09:** Assume the shortest period is the smallest value in the hard-coded list of choices, so cards on a shorter stored period would be skipped.
+- **c03 and c05:** Add unrequested work: c03 adds a new job class and changes the schedule config, and c05 changes the system-comment code.
+- **c11:** Makes the board a required argument to `due_to_be_postponed`, which breaks existing callers that pass nothing.
+
+<why>
+Decided on fidelity and fitness: c01 keeps the exact COALESCE rule, adds a cutoff from the smallest stored period, walks cards in index order (account_id, last_active_at, id) and updates brakeman.ignore.
+Runner-up c08 is the cleanest per-account version, but it changes the brakeman-approved query without updating brakeman.ignore.
+c12 walks by id (rescans the stale range each batch). c02/c03/c09 take the minimum from the hard-coded period list and miss shorter stored periods.
+c03 (new job, schedule change) and c05 (SystemCommenter change) add unrequested work. c11 makes the board a required argument to the scope.
+</why>
+
+```choice
+c01
+```

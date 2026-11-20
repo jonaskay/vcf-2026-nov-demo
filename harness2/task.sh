@@ -163,6 +163,45 @@ copy_rollouts() { # <src with r<i>/> <dest>: every rollout that has a record
   fi
 }
 
+# ---------- infrastructure failures ----------
+# An API failure (no credits, quota, outage) is not evidence about a harness. Without these checks
+# a failed session read as an empty reply (KEEP_BASE, no choice, NO_ENTRY) and failed rollouts as
+# agent_error records, and the task was marked DONE on fake results (run 2, Nov 17, twice).
+# On such a failure the stage stops with exit 1 before it is marked done, so a rerun of stream.sh
+# resumes the task from that stage.
+
+check_session_api() { # <label> <stream-json log>: stop if the session ended on an API error
+  local label=$1 f=$2 err
+  err=$(jq -rR 'fromjson? | select(.type == "result" and (.terminal_reason == "api_error" or .api_error_status != null))
+               | "HTTP \(.api_error_status // "?"): \(.result // "no message")"' "$f" 2>/dev/null | tail -1)
+  [[ -z $err ]] || die "$label: Claude API error ($err); the session did not run properly. Fix the cause (for example add credits), then rerun: the task resumes from this stage."
+}
+
+credit_pat='insufficient_quota|You have no credits remaining'   # OpenAI's wording, as Luna logs it
+
+rollout_ok() { # <rollout dir>: 0 if it has a record that is not an infrastructure/agent failure
+  local out
+  out=$(jq -r '.outcome // empty' "$1/result.json" 2>/dev/null || true)
+  [[ -n $out && $out != agent_error && $out != environment_error ]]
+}
+
+check_rollouts() { # <stage dir> <n> <label prefix>: stop on a credit error, or when no rollout completed
+  local sd=$1 n=$2 pre=$3 i bad="" ok=0
+  for i in $(seq 1 "$n"); do
+    if rollout_ok "$sd/r$i"; then ok=$((ok + 1))
+    elif grep -rqsE "$credit_pat" "$sd/r$i.eval.log" "$demo/private/raw-runs/$pre-$i" "$demo/private/raw-runs/$pre-$i.failed"; then
+      bad="$bad r$i"
+    fi
+  done
+  [[ -z $bad && $ok -gt 0 ]] && return 0
+  # Clear the failed records so the rerun redoes them; completed rollouts are kept.
+  for i in $(seq 1 "$n"); do rollout_ok "$sd/r$i" || rm -rf "$sd/r$i" "$sd/r$i.eval.log"; done
+  if [[ -n $bad ]]; then
+    die "$(basename "$sd"): Luna API credit/quota error in$bad; failed rollouts cleared. Add OpenAI credits, then rerun: the task resumes from this stage."
+  fi
+  die "$(basename "$sd"): none of the $n rollouts completed (all agent_error/environment_error or no record); failed rollouts cleared. Check private/raw-runs/$pre-*, then rerun."
+}
+
 # ---------- sessions ----------
 
 session() { # <stage> <label> <prompt file> <edit|read> <budget> [extra text]
@@ -192,6 +231,7 @@ session() { # <stage> <label> <prompt file> <edit|read> <budget> [extra text]
       --max-budget-usd "$budget" --max-turns "$max_turns" \
       --output-format stream-json --verbose > "$f" ) || log "$label: claude exited non-zero (see $f)"
   audit "$label" "$f" "$sd"
+  check_session_api "$label" "$f"
   [[ $before == "$(fp_outside "$sd")" ]] || log "$label: WARNING session changed files outside context/harness"
   reply_text "$f" > "$sd/reply.$label.txt"
   log "$label: $(jq -cR 'fromjson? | select(.type == "result") | {cost: .total_cost_usd, turns: .num_turns}' "$f" | tail -1)"
@@ -287,6 +327,7 @@ probe() { # <dim>: K rollouts of a candidate in parallel (skipped when it equals
     for i in $(seq 1 "$K"); do
       [[ -f $w/$st/r$i/result.json ]] && log "$st r$i: $(jq -c . "$w/$st/r$i/result.json")"
     done
+    check_rollouts "$w/$st" "$K" "r2-h2-$task-$dim"
   fi
   guard_no_scores "$w/$st"
   mark "$st"
@@ -369,6 +410,7 @@ if [[ $dry != 1 ]] && ! is_done final; then
     for i in $(seq 1 "$KFINAL"); do
       [[ -f $w/final/r$i/result.json ]] && log "final r$i: $(jq -c . "$w/final/r$i/result.json")"
     done
+    check_rollouts "$w/final" "$KFINAL" "r2-h2-$task-final"
   fi
   log "final: source=$(cat "$w/final/SOURCE")"
   guard_no_scores "$w/final"

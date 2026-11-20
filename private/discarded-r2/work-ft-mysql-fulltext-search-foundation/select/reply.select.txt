@@ -1,0 +1,11 @@
+I picked c10 because it is the plainest complete version of the request. Nothing was run; I judged all 12 patches by reading them against the request.
+
+<why>
+Delivery and conformance decided it. c10 adds `/search?q=` and finds cards by title, description or comment body, limited to published cards on boards the user can access, newest first. It wraps matches in `<mark>` using simple `Card.search` and `Comment.search` scopes with account guards and no extra features.
+Closest runner-up is c02, which is just as clean, but its `matching` scope has no blank-query guard, so its correctness depends on the controller checking first.
+c07 adds a migration, a new column and an Action Text callback that weren't asked for. c06 makes every word of the query required separately and changes the menu hotkey to "s". c03 and c04 show only 3 comments per card, a limit nobody asked for. c11 loads every candidate rich-text body into Ruby to filter it and reorders the existing menu hotkeys.
+</why>
+
+```choice
+c10
+```

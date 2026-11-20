@@ -1,0 +1,122 @@
+diff --git a/app/models/card/entropic.rb b/app/models/card/entropic.rb
+index ebaad78..c67cffb 100644
+--- a/app/models/card/entropic.rb
++++ b/app/models/card/entropic.rb
+@@ -3,11 +3,15 @@ module Card::Entropic
+ 
+   included do
+     scope :due_to_be_postponed, -> do
++      now = Time.now
++
+       active
++        # Cards newer than the shortest available period cannot be due.
++        .where(cards: { last_active_at: ..(now - Entropy::MIN_AUTO_POSTPONE_PERIOD_IN_SECONDS) })
+         .joins(board: :account)
+         .left_outer_joins(board: :entropy)
+         .joins("LEFT OUTER JOIN entropies AS account_entropies ON account_entropies.account_id = accounts.id AND account_entropies.container_type = 'Account' AND account_entropies.container_id = accounts.id")
+-        .where("last_active_at <= #{connection.date_subtract('?', 'COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period)')}", Time.now)
++        .where("last_active_at <= #{connection.date_subtract('?', 'COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period)')}", now)
+     end
+ 
+     scope :postponing_soon, -> do
+@@ -25,7 +29,7 @@ module Card::Entropic
+ 
+   class_methods do
+     def auto_postpone_all_due
+-      due_to_be_postponed.find_each do |card|
++      due_to_be_postponed.find_each(cursor: [ :last_active_at, :id ], order: [ :asc, :asc ]) do |card|
+         card.auto_postpone(user: card.account.system_user)
+       end
+     end
+diff --git a/app/models/entropy.rb b/app/models/entropy.rb
+index c896fc4..f1050a1 100644
+--- a/app/models/entropy.rb
++++ b/app/models/entropy.rb
+@@ -2,6 +2,7 @@ class Entropy < ApplicationRecord
+   DEFAULT_AUTO_POSTPONE_PERIOD_IN_DAYS = 30
+   AUTO_POSTPONE_PERIODS_IN_DAYS = [ 3, 7, 30, 90, 365, 11 ].freeze
+   AUTO_POSTPONE_PERIODS_IN_SECONDS = AUTO_POSTPONE_PERIODS_IN_DAYS.map { |n| n.day.in_seconds }.freeze
++  MIN_AUTO_POSTPONE_PERIOD_IN_SECONDS = AUTO_POSTPONE_PERIODS_IN_SECONDS.min
+ 
+   belongs_to :account, default: -> { container.account }
+   belongs_to :container, polymorphic: true
+diff --git a/db/migrate/20261116000000_add_entropy_sweep_index_to_cards.rb b/db/migrate/20261116000000_add_entropy_sweep_index_to_cards.rb
+new file mode 100644
+index 0000000..fd40a50
+--- /dev/null
++++ b/db/migrate/20261116000000_add_entropy_sweep_index_to_cards.rb
+@@ -0,0 +1,5 @@
++class AddEntropySweepIndexToCards < ActiveRecord::Migration[8.2]
++  def change
++    add_index :cards, [:status, :last_active_at, :id]
++  end
++end
+diff --git a/db/schema.rb b/db/schema.rb
+index 99e6be9..1eab5e8 100644
+--- a/db/schema.rb
++++ b/db/schema.rb
+@@ -10,7 +10,7 @@
+ #
+ # It's strongly recommended that you check this file into your version control system.
+ 
+-ActiveRecord::Schema[8.2].define(version: 2026_02_18_120000) do
++ActiveRecord::Schema[8.2].define(version: 2026_11_16_000000) do
+   create_table "accesses", id: :uuid, charset: "utf8mb4", collation: "utf8mb4_0900_ai_ci", force: :cascade do |t|
+     t.datetime "accessed_at"
+     t.uuid "account_id", null: false
+@@ -231,6 +231,7 @@ ActiveRecord::Schema[8.2].define(version: 2026_02_18_120000) do
+     t.index ["account_id", "number"], name: "index_cards_on_account_id_and_number", unique: true
+     t.index ["board_id"], name: "index_cards_on_board_id"
+     t.index ["column_id"], name: "index_cards_on_column_id"
++    t.index ["status", "last_active_at", "id"], name: "index_cards_on_status_and_last_active_at_and_id"
+   end
+ 
+   create_table "closers_filters", id: false, charset: "utf8mb4", collation: "utf8mb4_0900_ai_ci", force: :cascade do |t|
+diff --git a/db/schema_sqlite.rb b/db/schema_sqlite.rb
+index 00125d1..0490b8e 100644
+--- a/db/schema_sqlite.rb
++++ b/db/schema_sqlite.rb
+@@ -10,7 +10,7 @@
+ #
+ # It's strongly recommended that you check this file into your version control system.
+ 
+-ActiveRecord::Schema[8.2].define(version: 2026_02_18_120000) do
++ActiveRecord::Schema[8.2].define(version: 2026_11_16_000000) do
+   create_table "accesses", id: :uuid, force: :cascade do |t|
+     t.datetime "accessed_at"
+     t.uuid "account_id", null: false
+@@ -231,6 +231,7 @@ ActiveRecord::Schema[8.2].define(version: 2026_02_18_120000) do
+     t.index ["account_id", "number"], name: "index_cards_on_account_id_and_number", unique: true
+     t.index ["board_id"], name: "index_cards_on_board_id"
+     t.index ["column_id"], name: "index_cards_on_column_id"
++    t.index ["status", "last_active_at", "id"], name: "index_cards_on_status_and_last_active_at_and_id"
+   end
+ 
+   create_table "closers_filters", id: false, force: :cascade do |t|
+diff --git a/test/models/card/entropic_test.rb b/test/models/card/entropic_test.rb
+index 848cfa7..55d38cc 100644
+--- a/test/models/card/entropic_test.rb
++++ b/test/models/card/entropic_test.rb
+@@ -32,6 +32,22 @@ class Card::EntropicTest < ActiveSupport::TestCase
+     assert_equal original_period, account_entropy.reload.auto_postpone_period
+   end
+ 
++  test "due cards include the minimum supported entropy boundary" do
++    freeze_time
++
++    entropies(:writebook_board).update! auto_postpone_period: 30.days
++    cards(:logo).update! last_active_at: 4.days.ago
++    assert_not_includes Card.due_to_be_postponed, cards(:logo)
++
++    minimum_period = Entropy::MIN_AUTO_POSTPONE_PERIOD_IN_SECONDS.seconds
++    entropies(:writebook_board).update! auto_postpone_period: minimum_period
++    cards(:logo).update! last_active_at: minimum_period.ago
++    cards(:layout).update! last_active_at: minimum_period.ago + 1.second
++
++    assert_includes Card.due_to_be_postponed, cards(:logo)
++    assert_not_includes Card.due_to_be_postponed, cards(:layout)
++  end
++
+   test "auto postpone all due using the default account entropy" do
+     entropies(:writebook_board).destroy
+ 

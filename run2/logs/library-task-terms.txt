@@ -1,0 +1,6 @@
+ft-local-time-human-clock: 6 task-term hit(s) in library/ft-local-time-human-clock
+ft-notification-bundle-window-overlap: 1 task-term hit(s) in library/ft-notification-bundle-window-overlap
+ft-card-reactions: 0 task-term hit(s) in library/ft-card-reactions
+ft-card-stalled-quiet-clock: 0 task-term hit(s) in library/ft-card-stalled-quiet-clock
+ft-entropy-sweep: 13 task-term hit(s) in library/ft-entropy-sweep
+ft-mysql-fulltext-search-foundation: 0 task-term hit(s) in library/ft-mysql-fulltext-search-foundation

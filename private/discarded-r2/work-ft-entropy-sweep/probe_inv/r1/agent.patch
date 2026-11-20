@@ -1,0 +1,121 @@
+diff --git a/app/models/card/entropic.rb b/app/models/card/entropic.rb
+index ebaad78..4cc63da 100644
+--- a/app/models/card/entropic.rb
++++ b/app/models/card/entropic.rb
+@@ -2,12 +2,12 @@ module Card::Entropic
+   extend ActiveSupport::Concern
+ 
+   included do
+-    scope :due_to_be_postponed, -> do
+-      active
+-        .joins(board: :account)
+-        .left_outer_joins(board: :entropy)
+-        .joins("LEFT OUTER JOIN entropies AS account_entropies ON account_entropies.account_id = accounts.id AND account_entropies.container_type = 'Account' AND account_entropies.container_id = accounts.id")
+-        .where("last_active_at <= #{connection.date_subtract('?', 'COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period)')}", Time.now)
++    scope :due_to_be_postponed, ->(board, now = Time.current) do
++      if period = board.entropy&.auto_postpone_period
++        where(board: board).active.where(last_active_at: ..(now - period))
++      else
++        none
++      end
+     end
+ 
+     scope :postponing_soon, -> do
+@@ -25,8 +25,15 @@ module Card::Entropic
+ 
+   class_methods do
+     def auto_postpone_all_due
+-      due_to_be_postponed.find_each do |card|
+-        card.auto_postpone(user: card.account.system_user)
++      now = Time.current
++      system_users = {}
++
++      Board.preload(:entropy, account: :entropy).find_each do |board|
++        due_to_be_postponed(board, now).find_each(cursor: [ :last_active_at, :id ]) do |card|
++          account = board.account_id == card.account_id ? board.account : card.account
++          system_user = system_users[card.account_id] ||= account.system_user
++          card.auto_postpone(user: system_user)
++        end
+       end
+     end
+   end
+diff --git a/db/migrate/20260219120000_add_board_activity_index_to_cards.rb b/db/migrate/20260219120000_add_board_activity_index_to_cards.rb
+new file mode 100644
+index 0000000..4dbb0dd
+--- /dev/null
++++ b/db/migrate/20260219120000_add_board_activity_index_to_cards.rb
+@@ -0,0 +1,6 @@
++class AddBoardActivityIndexToCards < ActiveRecord::Migration[8.2]
++  def change
++    remove_index :cards, :board_id
++    add_index :cards, [ :board_id, :status, :last_active_at, :id ], name: "index_cards_on_board_status_activity"
++  end
++end
+diff --git a/db/schema.rb b/db/schema.rb
+index 99e6be9..cd44acb 100644
+--- a/db/schema.rb
++++ b/db/schema.rb
+@@ -10,7 +10,7 @@
+ #
+ # It's strongly recommended that you check this file into your version control system.
+ 
+-ActiveRecord::Schema[8.2].define(version: 2026_02_18_120000) do
++ActiveRecord::Schema[8.2].define(version: 2026_02_19_120000) do
+   create_table "accesses", id: :uuid, charset: "utf8mb4", collation: "utf8mb4_0900_ai_ci", force: :cascade do |t|
+     t.datetime "accessed_at"
+     t.uuid "account_id", null: false
+@@ -229,7 +229,7 @@ ActiveRecord::Schema[8.2].define(version: 2026_02_18_120000) do
+     t.datetime "updated_at", null: false
+     t.index ["account_id", "last_active_at", "status"], name: "index_cards_on_account_id_and_last_active_at_and_status"
+     t.index ["account_id", "number"], name: "index_cards_on_account_id_and_number", unique: true
+-    t.index ["board_id"], name: "index_cards_on_board_id"
++    t.index ["board_id", "status", "last_active_at", "id"], name: "index_cards_on_board_status_activity"
+     t.index ["column_id"], name: "index_cards_on_column_id"
+   end
+ 
+diff --git a/db/schema_sqlite.rb b/db/schema_sqlite.rb
+index 00125d1..1cee0b0 100644
+--- a/db/schema_sqlite.rb
++++ b/db/schema_sqlite.rb
+@@ -10,7 +10,7 @@
+ #
+ # It's strongly recommended that you check this file into your version control system.
+ 
+-ActiveRecord::Schema[8.2].define(version: 2026_02_18_120000) do
++ActiveRecord::Schema[8.2].define(version: 2026_02_19_120000) do
+   create_table "accesses", id: :uuid, force: :cascade do |t|
+     t.datetime "accessed_at"
+     t.uuid "account_id", null: false
+@@ -229,7 +229,7 @@ ActiveRecord::Schema[8.2].define(version: 2026_02_18_120000) do
+     t.datetime "updated_at", null: false
+     t.index ["account_id", "last_active_at", "status"], name: "index_cards_on_account_id_and_last_active_at_and_status"
+     t.index ["account_id", "number"], name: "index_cards_on_account_id_and_number", unique: true
+-    t.index ["board_id"], name: "index_cards_on_board_id"
++    t.index ["board_id", "status", "last_active_at", "id"], name: "index_cards_on_board_status_activity"
+     t.index ["column_id"], name: "index_cards_on_column_id"
+   end
+ 
+diff --git a/test/models/card/entropic_test.rb b/test/models/card/entropic_test.rb
+index 848cfa7..250b767 100644
+--- a/test/models/card/entropic_test.rb
++++ b/test/models/card/entropic_test.rb
+@@ -32,6 +32,19 @@ class Card::EntropicTest < ActiveSupport::TestCase
+     assert_equal original_period, account_entropy.reload.auto_postpone_period
+   end
+ 
++  test "due scope uses the board activity index in SQLite" do
++    skip unless ActiveRecord::Base.connection.adapter_name == "SQLite"
++
++    relation = Card.due_to_be_postponed(boards(:writebook))
++      .order(last_active_at: :asc, id: :asc)
++      .limit(1)
++    plan = ActiveRecord::Base.connection.execute("EXPLAIN QUERY PLAN #{relation.to_sql}").map { |row| row.fetch("detail") }
++
++    assert plan.any? { |step| step.include?("index_cards_on_board_status_activity") }
++    assert_not_includes plan, "SCAN cards"
++    assert_not plan.any? { |step| step.include?("USE TEMP B-TREE FOR ORDER BY") }
++  end
++
+   test "auto postpone all due using the default account entropy" do
+     entropies(:writebook_board).destroy
+ 

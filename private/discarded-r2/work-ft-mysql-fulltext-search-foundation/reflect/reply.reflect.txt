@@ -1,0 +1,26 @@
+<edits>
+component: tool_guidance.md
+candidates: inv, adopted
+change: Replaced the generic Python-flavoured examples (`newfile.py`, sed recipes) with three things: a line saying the sandbox has no `python3`, a Ruby anchor-edit recipe (`ruby - <<'EDIT' && git diff`, heredoc anchors, `sub! or abort`), and warnings about three silent edit failures (single-quoted `'\n'` anchors, a clashing heredoc delimiter, `;` chaining). It also added testing facts: one-file and full-suite commands, SQLite, two schema files, rubocop, and a `git status` check before submitting.
+observed: Every run without this file tried `python3` and got command-not-found (base r2 step 14, base r3 step 27, dom r1 step 30, dom r2 step 21). Runs without it also hit the single-quoted `'\n'` anchor trap: base r3 steps 28-47 had repeated failed `sub!` edits, and dom r2 steps 30-35 needed four tries on one test edit. No inv or composed run called `python3`, and all used the recipe as written (inv r1 step 28, inv r2 step 25, inv r3 step 27, composed r1 step 31, composed r3 step 25). inv ran the full suite in 3/3 runs against 2/3 for base. Anchor misses still happened with the file (inv r3 steps 57 and 61, composed r2 steps 30 and 36), but they aborted loudly instead of passing silently. The drop in minutes (inv 26/17/30 against base 38/20/62) cannot be credited to this file because base ran on a different day.
+verdict: helped
+
+component: skills/card-text-search/SKILL.md
+candidates: dom, adopted
+change: Added a new domain skill. It covers visibility through `Current.user.accessible_cards` and `.published`, ordering and pagination idioms, the fact that ActionText `body` is HTML (so build excerpts from `to_plain_text` and probe a markup term), the SQLite/MySQL dual-schema rules, EXISTS subqueries on a Card scope as the default design, test-writing traps (`with_current_user`, drafted comments needing an explicit `account`), and a done check. The dom form also said a blank query should return nothing. The adopted form drops that rule, routes the probe through `bin/rails runner` or a temporary test, makes the done-check items generic, and adds a no-scratch-files check.
+observed: The skill was read at step 3 in 6/6 runs (dom r1 step 3, dom r2 step 3, composed r1 step 3, composed r2 step 3, composed r3 step 3), and agents acted on it. Following §4, dom r2 built its drafted comment with an explicit `account`, the step where base r2 failed on a missing account at step 18. dom r1 step 43 and dom r2 steps 36-37 wrote markup-probe test files as §2 says, and composed r3 step 38 still wrote one into /app even after the revision. The probe also widened scope. After composed r1 probed the HTML body at step 56, it added a migration, a plain-text column, an ActionText initializer change and data-transfer model edits (steps 57-89, 16 files, +362/-4). After composed r2 step 49, it added HTML-escaped search patterns. Composed runs took longer (44/41/29 min) than dom (22/20/50). No run isolates whether this changed the quality of the result, and the dom and composed sets differ in their tool guidance.
+verdict: confounded
+
+component: system.md
+candidates: dom, adopted
+change: Appended one trigger line: when a request finds, filters or lists cards by text or by visibility, `cat /opt/harness/skills/card-text-search/SKILL.md` and follow it.
+observed: The skill was read in every run that had this line (dom 3/3, composed 3/3; e.g. dom r1 step 3, composed r2 step 3). No base or inv run opened anything under /opt/harness (e.g. base r3 step 3 starts with `ls`/`find`). Beyond getting the skill read, the line changed nothing on its own.
+verdict: helped
+</edits>
+
+<experience>
+cue: Base runs in a sandbox without Python keep editing files by scripted string substitution: they try `python3` first, then Ruby `sub!` with single-quoted multi-line anchors that silently fail to match, and so lose steps to edits that did not happen.
+lesson: In tool_guidance.md, replace the generic language-neutral edit examples with one anchor-edit recipe in a language the sandbox does have. Use a quoted heredoc for the anchor, abort on a miss (`sub!(old, new) or abort`), chain with `&&` into `git diff -- <file>`, and state outright which interpreter is absent. Check: no example in the file names a missing tool, and the recipe fails loudly when the anchor is wrong.
+evidence: tool_guidance.md row (helped). Every run without the file tried `python3` (base r2 step 14, base r3 step 27, dom r1 step 30, dom r2 step 21) and hit single-quoted `'\n'` anchor misses (base r3 steps 28-47, dom r2 steps 30-35). No run with the file called `python3`, and all used the recipe as written (inv r1 step 28, inv r2 step 25, composed r1 step 31).
+confidence: medium. The python3 contrast holds in 6/6 runs with the file against every inspected run without it, across arms. The anchor trap is the kind of failure this guidance targets, but the time savings cannot be credited to it because base ran on a different day.
+</experience>

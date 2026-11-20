@@ -1,0 +1,80 @@
+diff -ruN -x .keep base_harness/tool_guidance.md candidates/inv/harness/tool_guidance.md
+--- base_harness/tool_guidance.md	2026-11-18 00:20:02
++++ candidates/inv/harness/tool_guidance.md	2026-11-18 00:20:02
+@@ -1,40 +1,52 @@
+-## Useful command examples
++## Tools and editing
+ 
+-### Create a new file:
++There is no `python3` in this sandbox (`command not found`). Use bash, `sed`, and Ruby.
+ 
++### Create or fully rewrite a file
++
+ ```bash
+-cat <<'EOF' > newfile.py
+-import numpy as np
+-hello = "ciao"
+-print(hello)
++cat <<'EOF' > app/models/example.rb
++class Example
++end
+ EOF
+ ```
+ 
+-### Edit files with sed:
++### Edit part of an existing file with Ruby
+ 
+ ```bash
+-# Replace all occurrences
+-sed -i 's/old_string/new_string/g' filename.py
++ruby - <<'EDIT' && git diff -- app/models/example.rb
++path = "app/models/example.rb"
++text = File.read(path)
++old = <<~'OLD'
++  def old_method
++  end
++OLD
++new = <<~'NEW'
++  def new_method
++  end
++NEW
++text.sub!(old, new) or abort "anchor not found in #{path}"
++File.write(path, text)
++EDIT
++```
+ 
+-# Replace only first occurrence
+-sed -i 's/old_string/new_string/' filename.py
++Edits like this break silently in three ways:
++- In Ruby a single-quoted `'...\n...'` holds a literal backslash and `n`, not a newline. That anchor never matches, and `sub!` returns nil without raising. Use `<<~'OLD'` heredocs or double quotes for multi-line anchors.
++- The outer bash delimiter (`EDIT`) must not appear inside the script. Using `RUBY` both as the outer delimiter and as an inner heredoc ends the script early.
++- Chaining with `;` hides a failed edit, because the exit code comes from the last command. Chain with `&&`.
+ 
+-# Replace first occurrence on line 1
+-sed -i '1s/old_string/new_string/' filename.py
++For a one-line change, `sed -i 's/old/new/' file` works. Afterwards, always check the result with `git diff -- <file>` or `grep -n`. A command that exits 0 does not prove the file changed.
+ 
+-# Replace all occurrences in lines 1-10
+-sed -i '1,10s/old_string/new_string/g' filename.py
+-```
++### View file content
+ 
+-### View file content:
+-
+ ```bash
+-# View specific lines with numbers
+-nl -ba filename.py | sed -n '10,20p'
++nl -ba app/models/card.rb | sed -n '10,40p'
+ ```
+ 
+-### Any other command you want to run
++## Testing in this workspace
+ 
+-```bash
+-anything
+-```
++- Run one file with `bin/rails test test/controllers/<name>_test.rb` (well under a second) and one test with `bin/rails test <file>:<line>`.
++- The full suite, `bin/rails test`, finished 1504 tests in about 15 seconds. It is cheap, so run it after your targeted tests pass and again before you submit.
++- Tests run on SQLite (`storage/test.sqlite3`; errors appear as `SQLite3::...`). There are two schema files, `db/schema.rb` and `db/schema_sqlite.rb`.
++- Lint the files you touched with `bin/rubocop <files>`.
++- Before you submit, run `git status --short` and `git diff`. Remove any scratch files, and check that every file you meant to change is listed.

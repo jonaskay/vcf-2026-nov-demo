@@ -1,0 +1,12 @@
+c01	composed	r2	/Users/jk/dev/vcf-nov-2026-talk/demo/run2/work/ft-entropy-sweep/final/r2	r2-h2-ft-entropy-sweep-final-2
+c02	composed	r1	/Users/jk/dev/vcf-nov-2026-talk/demo/run2/work/ft-entropy-sweep/final/r1	r2-h2-ft-entropy-sweep-final-1
+c03	inv	r3	/Users/jk/dev/vcf-nov-2026-talk/demo/run2/work/ft-entropy-sweep/probe_inv/r3	r2-h2-ft-entropy-sweep-inv-3
+c04	base	r1	/Users/jk/dev/vcf-nov-2026-talk/demo/run2/work/ft-entropy-sweep/refs/r1	r2-h0-ft-entropy-sweep-1
+c05	composed	r3	/Users/jk/dev/vcf-nov-2026-talk/demo/run2/work/ft-entropy-sweep/final/r3	r2-h2-ft-entropy-sweep-final-3
+c06	dom	r1	/Users/jk/dev/vcf-nov-2026-talk/demo/run2/work/ft-entropy-sweep/probe_dom/r1	r2-h2-ft-entropy-sweep-dom-1
+c07	inv	r2	/Users/jk/dev/vcf-nov-2026-talk/demo/run2/work/ft-entropy-sweep/probe_inv/r2	r2-h2-ft-entropy-sweep-inv-2
+c08	base	r2	/Users/jk/dev/vcf-nov-2026-talk/demo/run2/work/ft-entropy-sweep/refs/r2	r2-h0-ft-entropy-sweep-2
+c09	dom	r2	/Users/jk/dev/vcf-nov-2026-talk/demo/run2/work/ft-entropy-sweep/probe_dom/r2	r2-h2-ft-entropy-sweep-dom-2
+c10	base	r3	/Users/jk/dev/vcf-nov-2026-talk/demo/run2/work/ft-entropy-sweep/refs/r3	r2-h0-ft-entropy-sweep-3
+c11	inv	r1	/Users/jk/dev/vcf-nov-2026-talk/demo/run2/work/ft-entropy-sweep/probe_inv/r1	r2-h2-ft-entropy-sweep-inv-1
+c12	dom	r3	/Users/jk/dev/vcf-nov-2026-talk/demo/run2/work/ft-entropy-sweep/probe_dom/r3	r2-h2-ft-entropy-sweep-dom-3

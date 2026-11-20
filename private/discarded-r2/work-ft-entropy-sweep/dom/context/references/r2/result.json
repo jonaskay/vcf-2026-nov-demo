@@ -1,0 +1,7 @@
+{
+  "task": "ft-entropy-sweep",
+  "outcome": "agent_timeout",
+  "steps": 112,
+  "cost_usd": 0.2730661250000001,
+  "duration_s": 5456.9
+}

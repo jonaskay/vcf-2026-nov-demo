@@ -1,0 +1,399 @@
+diff --git a/app/jobs/notification/email_bundle_delivery_job.rb b/app/jobs/notification/email_bundle_delivery_job.rb
+new file mode 100644
+index 0000000..467871b
+--- /dev/null
++++ b/app/jobs/notification/email_bundle_delivery_job.rb
+@@ -0,0 +1,42 @@
++class Notification::EmailBundleDeliveryJob < ApplicationJob
++  include SmtpDeliveryErrorHandling
++
++  discard_on ActiveJob::DeserializationError
++
++  def perform(bundle)
++    settings = bundle.user.settings
++
++    if settings
++      settings.with_lock do
++        deliver_or_reschedule(bundle.reload, settings)
++      end
++    else
++      bundle.destroy!
++    end
++  rescue ActiveRecord::RecordNotFound
++    # The user or their pending email bundle was removed before this job ran.
++  end
++
++  private
++    def deliver_or_reschedule(bundle, settings)
++      if settings.bundle_email_frequency == "never" ||
++          !bundle.user.active? ||
++          bundle.user.identity.blank? ||
++          !bundle.account.active?
++        bundle.destroy!
++      else
++        ends_at = bundle.starts_at + settings.bundle_email_window
++
++        if bundle.ends_at != ends_at
++          bundle.update!(ends_at: ends_at)
++        end
++
++        if ends_at > Time.current
++          bundle.deliver_later
++        else
++          NotificationMailer.digest(bundle).deliver_now if bundle.notifications.exists?
++          bundle.destroy!
++        end
++      end
++    end
++end
+diff --git a/app/mailers/notification_mailer.rb b/app/mailers/notification_mailer.rb
+new file mode 100644
+index 0000000..6abc40a
+--- /dev/null
++++ b/app/mailers/notification_mailer.rb
+@@ -0,0 +1,9 @@
++class NotificationMailer < ApplicationMailer
++  def digest(bundle)
++    @bundle = bundle
++    @user = bundle.user
++    @notifications = bundle.notifications.preloaded.order(:created_at, :id).to_a
++
++    mail to: @user.identity.email_address, subject: "Your Fizzy notification digest"
++  end
++end
+diff --git a/app/models/notification/email_bundle.rb b/app/models/notification/email_bundle.rb
+new file mode 100644
+index 0000000..944c6ef
+--- /dev/null
++++ b/app/models/notification/email_bundle.rb
+@@ -0,0 +1,58 @@
++class Notification::EmailBundle < ApplicationRecord
++  belongs_to :account
++  belongs_to :user
++
++  has_many :items, class_name: "Notification::EmailBundleItem", dependent: :destroy
++  has_many :notifications, through: :items
++
++  class << self
++    def open_for(notification)
++      user = notification.user
++      settings = user.settings
++
++      if eligible?(notification, settings)
++        settings.with_lock do
++          if eligible?(notification, settings)
++            bundle = find_by(user_id: user.id)
++
++            if bundle.nil?
++              starts_at = Time.current
++              bundle = create!(
++                account: notification.account,
++                user: user,
++                starts_at: starts_at,
++                ends_at: starts_at + settings.bundle_email_window
++              )
++              bundle.deliver_later
++            end
++
++            bundle.add(notification)
++          end
++        end
++      end
++    end
++
++    private
++      def eligible?(notification, settings)
++        settings.present? &&
++          settings.bundle_email_frequency != "never" &&
++          !notification.creator.system? &&
++          notification.user.active? &&
++          notification.user.identity.present? &&
++          notification.account.active?
++      end
++  end
++
++  def add(notification)
++    items.create_or_find_by!(notification: notification)
++  end
++
++  def deliver_later
++    Notification::EmailBundleDeliveryJob.set(wait_until: ends_at).perform_later(self)
++  end
++
++  def reschedule_later(ends_at:)
++    update!(ends_at: ends_at)
++    deliver_later
++  end
++end
+diff --git a/app/models/notification/email_bundle_item.rb b/app/models/notification/email_bundle_item.rb
+new file mode 100644
+index 0000000..de918ae
+--- /dev/null
++++ b/app/models/notification/email_bundle_item.rb
+@@ -0,0 +1,5 @@
++class Notification::EmailBundleItem < ApplicationRecord
++  belongs_to :account, default: -> { notification.account }
++  belongs_to :notification_email_bundle, class_name: "Notification::EmailBundle"
++  belongs_to :notification
++end
+diff --git a/app/views/notifications/settings/_email_digests.html.erb b/app/views/notifications/settings/_email_digests.html.erb
+new file mode 100644
+index 0000000..9a27b94
+--- /dev/null
++++ b/app/views/notifications/settings/_email_digests.html.erb
+@@ -0,0 +1,14 @@
++<section class="settings__section">
++  <h2 class="divider">Email digests</h2>
++
++  <%= form_with scope: :settings, url: notifications_settings_path, method: :patch, class: "flex flex-column gap-half" do |form| %>
++    <div class="flex flex-column gap-half">
++      <%= form.label :bundle_email_frequency, "Send me an email digest" %>
++      <%= form.select :bundle_email_frequency,
++            options_for_select({ "Off" => "never", "Every four hours" => "every_few_hours", "Daily" => "daily", "Weekly" => "weekly" }, Current.user.settings.bundle_email_frequency),
++            {}, class: "input input--select" %>
++    </div>
++
++    <%= form.button "Save email digest preference", type: :submit, class: "btn btn--link center txt-small" %>
++  <% end %>
++</section>
+diff --git a/db/migrate/20260710120000_create_notification_email_bundles.rb b/db/migrate/20260710120000_create_notification_email_bundles.rb
+new file mode 100644
+index 0000000..3504db6
+--- /dev/null
++++ b/db/migrate/20260710120000_create_notification_email_bundles.rb
+@@ -0,0 +1,31 @@
++class CreateNotificationEmailBundles < ActiveRecord::Migration[8.2]
++  def change
++    add_column :user_settings, :bundle_email_frequency, :string, default: "never", null: false
++
++    create_table :notification_email_bundles, id: :uuid do |t|
++      t.uuid :account_id, null: false
++      t.uuid :user_id, null: false
++      t.datetime :starts_at, null: false
++      t.datetime :ends_at, null: false
++
++      t.timestamps
++
++      t.index :account_id
++      t.index :user_id, unique: true
++    end
++
++    create_table :notification_email_bundle_items, id: :uuid do |t|
++      t.uuid :account_id, null: false
++      t.uuid :notification_email_bundle_id, null: false
++      t.uuid :notification_id, null: false
++
++      t.timestamps
++
++      t.index :account_id
++      t.index :notification_email_bundle_id
++      t.index :notification_id
++      t.index [ :notification_email_bundle_id, :notification_id ], unique: true,
++        name: "index_email_bundle_items_on_bundle_and_notification"
++    end
++  end
++end
+diff --git a/test/controllers/notifications/settings_controller_test.rb b/test/controllers/notifications/settings_controller_test.rb
+index 1eeceba..0d82fc7 100644
+--- a/test/controllers/notifications/settings_controller_test.rb
++++ b/test/controllers/notifications/settings_controller_test.rb
+@@ -7,9 +7,18 @@ class Notifications::SettingsControllerTest < ActionDispatch::IntegrationTest
+     sign_in_as @user
+   end
+ 
+-  test "show" do
++  test "show includes the email digest setting" do
+     get notifications_settings_path
+ 
+     assert_response :success
++    assert_select "h2", "Email digests"
++    assert_select "option[value='every_few_hours']", "Every four hours"
++  end
++
++  test "updates the email digest frequency" do
++    patch notifications_settings_path, params: { settings: { bundle_email_frequency: "weekly" } }
++
++    assert_response :no_content
++    assert_equal "weekly", @user.settings.reload.bundle_email_frequency
+   end
+ end
+diff --git a/test/models/account/data_transfer/notification_email_frequency_test.rb b/test/models/account/data_transfer/notification_email_frequency_test.rb
+new file mode 100644
+index 0000000..3375514
+--- /dev/null
++++ b/test/models/account/data_transfer/notification_email_frequency_test.rb
+@@ -0,0 +1,33 @@
++require "test_helper"
++
++class Account::DataTransfer::NotificationEmailFrequencyTest < ActiveSupport::TestCase
++  test "older settings exports without a bundle email frequency remain valid" do
++    record_set = Account::DataTransfer::RecordSet.new(
++      account: accounts(:"37s"),
++      model: User::Settings,
++      optional_attributes: [ :bundle_email_frequency ],
++      importable_model_names: [ "User::Settings" ]
++    )
++    data = {
++      "id" => "test_settings_id_1234567890123",
++      "account_id" => "missing_account_id_123456",
++      "user_id" => "missing_user_id_1234567890",
++      "timezone_name" => nil,
++      "created_at" => Time.current.iso8601,
++      "updated_at" => Time.current.iso8601
++    }
++    tempfile = Tempfile.new([ "settings_export", ".zip" ])
++    tempfile.binmode
++    writer = ZipFile::Writer.new(tempfile)
++    writer.add_file("data/user_settings/#{data['id']}.json", data.to_json)
++    writer.close
++    tempfile.rewind
++
++    assert_nothing_raised do
++      record_set.check(from: ZipFile::Reader.new(tempfile))
++    end
++  ensure
++    tempfile&.close
++    tempfile&.unlink
++  end
++end
+diff --git a/test/models/notification/email_bundle_test.rb b/test/models/notification/email_bundle_test.rb
+new file mode 100644
+index 0000000..24566da
+--- /dev/null
++++ b/test/models/notification/email_bundle_test.rb
+@@ -0,0 +1,135 @@
++require "test_helper"
++
++class Notification::EmailBundleTest < ActiveSupport::TestCase
++  include ActionMailer::TestHelper
++
++  test "opens a window on the first notification and adds later notifications without resetting its clock" do
++    user = users(:jason)
++    user.settings.update!(bundle_email_frequency: :every_few_hours)
++    started_at = Time.current
++
++    travel_to(started_at) do
++      first_notification = notify(user, events(:layout_published))
++      bundle = user.notification_email_bundles.sole
++
++      assert_equal started_at, bundle.starts_at
++      assert_equal started_at + 4.hours, bundle.ends_at
++      assert_equal [ first_notification ], bundle.notifications
++
++      travel 1.hour do
++        second_notification = notify(user, events(:text_published))
++
++        assert_equal started_at, bundle.reload.starts_at
++        assert_equal started_at + 4.hours, bundle.ends_at
++        assert_equal [ first_notification, second_notification ], bundle.notifications.order(:created_at)
++      end
++    end
++  end
++
++  test "a late notification joins the window that is still pending after its end time" do
++    user = users(:jason)
++    user.settings.update!(bundle_email_frequency: :daily)
++    started_at = Time.current
++    first_notification = nil
++
++    travel_to(started_at) do
++      first_notification = notify(user, events(:layout_published))
++    end
++
++    bundle = user.notification_email_bundles.sole
++    ends_at = bundle.ends_at
++
++    travel_to(ends_at + 1.hour) do
++      second_notification = notify(user, events(:text_published))
++
++      assert_equal bundle.id, user.notification_email_bundles.sole.id
++      assert_equal ends_at, bundle.reload.ends_at
++      assert_equal [ first_notification, second_notification ], bundle.notifications.order(:created_at)
++
++      assert_emails 1 do
++        perform_enqueued_jobs(only: Notification::EmailBundleDeliveryJob)
++      end
++    end
++
++    assert_not Notification::EmailBundle.exists?(bundle.id)
++    assert_includes ActionMailer::Base.deliveries.last.body.encoded, user.account.slug
++  end
++
++  test "re-notification of an existing notification is added to the bundle" do
++    user = users(:jason)
++    user.settings.update!(bundle_email_frequency: :daily)
++    notification = notify(user, events(:layout_published))
++    bundle = user.notification_email_bundles.sole
++
++    notification.update!(source: events(:text_published), creator: users(:kevin))
++
++    assert_equal [ notification ], bundle.reload.notifications
++    assert_equal events(:text_published), notification.reload.source
++  end
++
++  test "one pending window per user is enforced by a unique index" do
++    user = users(:jason)
++    attributes = { account: user.account, user: user, starts_at: Time.current, ends_at: 4.hours.from_now }
++    Notification::EmailBundle.create!(attributes)
++
++    assert_raises(ActiveRecord::RecordNotUnique) do
++      Notification::EmailBundle.create!(attributes)
++    end
++  end
++
++  test "turning email digests off discards the pending window" do
++    user = users(:jason)
++    user.settings.update!(bundle_email_frequency: :daily)
++    notify(user, events(:layout_published))
++    bundle = user.notification_email_bundles.sole
++
++    user.settings.update!(bundle_email_frequency: :never)
++
++    assert_empty user.notification_email_bundles
++
++    travel_to(bundle.ends_at) do
++      assert_emails 0 do
++        perform_enqueued_jobs(only: Notification::EmailBundleDeliveryJob)
++      end
++    end
++  end
++
++  test "deactivating a user discards the pending window" do
++    user = users(:jason)
++    user.settings.update!(bundle_email_frequency: :daily)
++    notify(user, events(:layout_published))
++
++    user.update!(active: false)
++
++    assert_empty user.notification_email_bundles
++  end
++
++  test "destroying a notification removes its bundle item" do
++    user = users(:jason)
++    user.settings.update!(bundle_email_frequency: :daily)
++    notification = notify(user, events(:layout_published))
++    item = Notification::EmailBundleItem.find_by!(notification: notification)
++
++    notification.destroy!
++
++    assert_not Notification::EmailBundleItem.exists?(item.id)
++  end
++
++  test "destroying a user removes pending bundles and their items" do
++    user = users(:jason)
++    user.settings.update!(bundle_email_frequency: :daily)
++    notification = notify(user, events(:layout_published))
++    bundle = user.notification_email_bundles.sole
++    item_id = Notification::EmailBundleItem.find_by!(notification: notification).id
++
++    user.destroy!
++
++    assert_not Notification::EmailBundle.exists?(bundle.id)
++    assert_not Notification::EmailBundleItem.exists?(item_id)
++  end
++
++  private
++    def notify(user, event)
++      Notification.create!(user: user, source: event, creator: event.creator)
++    end
++end

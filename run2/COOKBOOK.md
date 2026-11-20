@@ -191,6 +191,7 @@ grep -rl environment_error run2/baselines run2/meta_harness --include=result.jso
 ## Step 4: The stream, overnight (Phase 4)
 
 ```sh
+docker network prune -f      # free subnets first: probes start up to MAX_SANDBOXES sandboxes at once
 nohup caffeinate -dims harness2/stream.sh > run2/logs/stream.log 2>&1 &
 ```
 
@@ -225,6 +226,8 @@ and a `GATE:` line. Before spending on tasks 2–6, read `run2/work/<task1>/refl
 | `exit 4`, `COST CAP reached` | run 2 spent ≥ `COST_CAP` | review spend; continue with `COST_CAP=200 harness2/stream.sh` if justified |
 | `exit 5`, `GATE:` | see above | |
 | `exit 1`, `failed` | a stage errored (`ERROR:` in `task.log`) | fix, then rerun `stream.sh`: the task resumes from its last finished stage |
+| `ERROR: … Claude API error (HTTP 400: Credit balance is too low)` | a Harness² session hit an Anthropic API error (credits, quota, outage) | fix the account, then rerun `stream.sh`; the stage was not marked done |
+| `ERROR: probe_…/final: Luna API credit/quota error` or `none of the N rollouts completed` | OpenAI credits ran out, or every rollout of the stage failed | add credits / check `private/raw-runs/`; the failed records were cleared, so rerunning `stream.sh` redoes only them |
 | `REFUSING: ... already being worked on` | another stream/task holds the lock | check `ps`; a dead process's lock clears itself |
 | `ENGAGEMENT MISS after the retry` | a session still skipped required files | nothing to do now; it's logged and goes in the report |
 | rollouts at 0% CPU, no proxy traffic, files untouched for a long time | the Mac slept mid-run | see "Keep the Mac awake" in step 0 |

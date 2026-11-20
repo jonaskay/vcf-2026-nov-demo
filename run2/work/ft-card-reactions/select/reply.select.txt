@@ -1,0 +1,12 @@
+I'm submitting c09. It delivers everything the request asks for: card reaction routes and a controller that mirror the comment ones, a reaction control on the card detail view, a boost count on board-column previews shown only when non-zero, and the reactions URL in the card JSON. It does this by adding a nullable `card_id` column and leaving comment reactions untouched.
+
+<why>
+The pick came down to operational fitness. c01 and c12 rename or drop the `comment_id` column to make reactions polymorphic, but neither updates the existing comment-reaction fixtures. Both also call `.card` on the reacted-to record, and a Card itself likely has no `.card` method, so card reactions could fail on create.
+c10, c04 and c06 move or delete the existing comment reaction partials. c10 also adds a draft-card validation to the model, which goes beyond the request. c02 has no reactions preload, and c04 uses `.count` with no preload, so every preview runs an extra query.
+c09 preloads reactions everywhere previews render, including the public boards and pins, keeps both schema files in step with its migration, and only adds new code.
+The closest runner-up was c07, which is almost identical. It adds only a preload on the drag-back-to-triage controller and changes a test that already existed; c09 leaves comment reaction code and tests alone.
+</why>
+
+```choice
+c09
+```

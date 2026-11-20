@@ -1,0 +1,1 @@
+engagement[reflector]: trajectories opened per arm: base=2, composed=3, dom=3, inv=3; evidence.md read; 0 miss(es)

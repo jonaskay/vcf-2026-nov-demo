@@ -1,0 +1,7 @@
+reflect
+{"subtype":"success","cost_usd":0.6662975999999999,"turns":23}
+tool calls:
+  22 Read
+distinct files read: 22
+audit: clean
+engagement[reflector]: trajectories opened per arm: base=2, composed=4, dom=2, inv=3; evidence.md read; 0 miss(es)

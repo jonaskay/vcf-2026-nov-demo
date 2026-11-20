@@ -1,0 +1,374 @@
+diff --git a/app/controllers/searches_controller.rb b/app/controllers/searches_controller.rb
+new file mode 100644
+index 0000000..31fc218
+--- /dev/null
++++ b/app/controllers/searches_controller.rb
+@@ -0,0 +1,25 @@
++class SearchesController < ApplicationController
++  def index
++    @query = params[:q].to_s
++
++    cards = Current.user.accessible_cards.search(@query).with_rich_text_description
++    set_page_and_extract_portion_from cards
++
++    @matching_comments_by_card_id = matching_comments_by_card_id
++  end
++
++  private
++    def matching_comments_by_card_id
++      return {} if @query.blank? || @page.records.empty?
++
++      search_term = "%#{Card.sanitize_sql_like(@query, "!")}%"
++
++      Comment
++        .joins(:rich_text_body)
++        .where(card_id: @page.records.map(&:id))
++        .where("LOWER(action_text_rich_texts.body) LIKE LOWER(?) ESCAPE '!'", search_term)
++        .includes(:rich_text_body)
++        .order(:created_at, :id)
++        .group_by(&:card_id)
++    end
++end
+diff --git a/app/helpers/searches_helper.rb b/app/helpers/searches_helper.rb
+new file mode 100644
+index 0000000..f82dff1
+--- /dev/null
++++ b/app/helpers/searches_helper.rb
+@@ -0,0 +1,5 @@
++module SearchesHelper
++  def highlight_search_match(text)
++    highlight(text.to_s, @query, highlighter: "<mark>\\1</mark>")
++  end
++end
+diff --git a/app/models/card.rb b/app/models/card.rb
+index b3eac96..14b89c0 100644
+--- a/app/models/card.rb
++++ b/app/models/card.rb
+@@ -1,7 +1,7 @@
+ class Card < ApplicationRecord
+   include Accessible, Assignable, Attachments, Broadcastable, Closeable, Colored, Commentable,
+     Entropic, Eventable, Exportable, Golden, Mentions, Multistep, Pinnable, Postponable, Promptable,
+-    Readable, Stallable, Statuses, Storage::Tracked, Taggable, Triageable, Watchable
++    Readable, Searchable, Stallable, Statuses, Storage::Tracked, Taggable, Triageable, Watchable
+ 
+   belongs_to :account, default: -> { board.account }
+   belongs_to :board
+diff --git a/app/models/card/searchable.rb b/app/models/card/searchable.rb
+new file mode 100644
+index 0000000..fe4823a
+--- /dev/null
++++ b/app/models/card/searchable.rb
+@@ -0,0 +1,40 @@
++module Card::Searchable
++  extend ActiveSupport::Concern
++
++  included do
++    scope :search, ->(query) do
++      if query.present?
++        search_term = "%#{Card.sanitize_sql_like(query.to_s, "!")}%"
++
++        published
++          .where(
++            <<~SQL.squish,
++              LOWER(cards.title) LIKE LOWER(:search_term) ESCAPE '!'
++              OR EXISTS (
++                SELECT 1
++                FROM action_text_rich_texts AS card_descriptions
++                WHERE card_descriptions.record_type = 'Card'
++                  AND card_descriptions.record_id = cards.id
++                  AND card_descriptions.name = 'description'
++                  AND LOWER(card_descriptions.body) LIKE LOWER(:search_term) ESCAPE '!'
++              )
++              OR EXISTS (
++                SELECT 1
++                FROM comments
++                INNER JOIN action_text_rich_texts AS comment_bodies
++                  ON comment_bodies.record_type = 'Comment'
++                  AND comment_bodies.record_id = comments.id
++                  AND comment_bodies.name = 'body'
++                WHERE comments.card_id = cards.id
++                  AND LOWER(comment_bodies.body) LIKE LOWER(:search_term) ESCAPE '!'
++              )
++            SQL
++            search_term: search_term
++          )
++          .reverse_chronologically
++      else
++        none
++      end
++    end
++  end
++end
+diff --git a/app/views/searches/index.html.erb b/app/views/searches/index.html.erb
+new file mode 100644
+index 0000000..51c1c9a
+--- /dev/null
++++ b/app/views/searches/index.html.erb
+@@ -0,0 +1,36 @@
++<% @page_title = "Search" %>
++
++<% content_for :header do %>
++  <h1 class="header__title divider divider--fade full-width">Search</h1>
++<% end %>
++
++<section class="search-page">
++  <%= form_with url: search_path, method: :get, class: "search-page__form" do |form| %>
++    <%= form.search_field :q, value: @query, aria: { label: "Search cards" }, autofocus: true %>
++    <%= form.submit "Search" %>
++  <% end %>
++
++  <% if @query.present? %>
++    <section class="search-results" aria-label="Search results">
++      <%= with_automatic_pagination :search_results, @page do %>
++        <% @page.records.each do |card| %>
++          <article class="search-result" data-card-id="<%= card.id %>">
++            <h2 class="search-result__title"><%= link_to highlight_search_match(card.title), card_path(card) %></h2>
++
++            <% if card.description.present? %>
++              <p class="search-result__description"><%= highlight_search_match(card.description.to_plain_text) %></p>
++            <% end %>
++
++            <% @matching_comments_by_card_id.fetch(card.id, []).each do |comment| %>
++              <p class="search-result__comment"><%= highlight_search_match(comment.body.to_plain_text) %></p>
++            <% end %>
++          </article>
++        <% end %>
++      <% end %>
++
++      <% if @page.records.empty? %>
++        <p class="blank-slate">No cards match this search</p>
++      <% end %>
++    </section>
++  <% end %>
++</section>
+diff --git a/config/routes.rb b/config/routes.rb
+index d4f168c..37acd62 100644
+--- a/config/routes.rb
++++ b/config/routes.rb
+@@ -107,6 +107,8 @@ Rails.application.routes.draw do
+     end
+   end
+ 
++  get "search", to: "searches#index", as: :search
++
+   resources :tags, only: :index
+ 
+   namespace :notifications do
+diff --git a/test/controllers/searches_controller_test.rb b/test/controllers/searches_controller_test.rb
+new file mode 100644
+index 0000000..7a90afa
+--- /dev/null
++++ b/test/controllers/searches_controller_test.rb
+@@ -0,0 +1,133 @@
++require "test_helper"
++
++class SearchesControllerTest < ActionDispatch::IntegrationTest
++  setup do
++    Current.session = sessions(:kevin)
++    sign_in_as :kevin
++  end
++
++  test "GET /search accepts q and displays matching cards" do
++    card = create_card(title: "Route cobalt-search-marker")
++
++    get search_path, params: { q: "cobalt-search-marker" }
++
++    assert_response :success
++    assert_select ".search-result", count: 1
++    assert_equal card.title, css_select(".search-result__title a").first.text
++  end
++
++  test "search page finds a description-only match" do
++    card = create_card(title: "Unrelated description result", description: "cobalt-description-page-marker")
++
++    get search_path, params: { q: "cobalt-description-page-marker" }
++
++    assert_response :success
++    assert_equal [ card.id ], css_select(".search-result").map { |result| result["data-card-id"] }
++    assert_select ".search-result__description mark", text: "cobalt-description-page-marker"
++  end
++
++  test "search page finds a comment-only match" do
++    card = create_card(title: "Unrelated comment result")
++    card.comments.create!(body: "cobalt-comment-page-marker", creator: users(:kevin))
++
++    get search_path, params: { q: "cobalt-comment-page-marker" }
++
++    assert_response :success
++    assert_equal [ card.id ], css_select(".search-result").map { |result| result["data-card-id"] }
++    assert_select ".search-result__comment mark", text: "cobalt-comment-page-marker"
++  end
++
++  test "search results mark matches in the title, description, and matching comment" do
++    card = create_card(title: "Needlemark result", description: "Needlemark description")
++    card.comments.create!(body: "Needlemark comment", creator: users(:kevin))
++
++    get search_path, params: { q: "Needlemark" }
++
++    assert_response :success
++    assert_select ".search-result", count: 1
++    assert_select ".search-result mark", text: "Needlemark", count: 3
++  end
++
++  test "search highlights user content without rendering it as HTML" do
++    card = create_card(title: "<script>cobalt-xss-marker</script>")
++
++    get search_path, params: { q: "cobalt-xss-marker" }
++
++    assert_response :success
++    assert_select ".search-result script", count: 0
++    assert_select ".search-result mark", text: "cobalt-xss-marker"
++  end
++
++  test "search results are unique and newest first" do
++    older = newer = nil
++
++    travel_to Time.utc(2025, 2, 1, 12) do
++      older = create_card(title: "cobalt-page-order-marker old")
++    end
++
++    travel_to Time.utc(2025, 2, 2, 12) do
++      newer = create_card(title: "cobalt-page-order-marker new", description: "cobalt-page-order-marker")
++      newer.comments.create!(body: "cobalt-page-order-marker", creator: users(:kevin))
++    end
++
++    get search_path, params: { q: "cobalt-page-order-marker" }
++
++    assert_response :success
++    assert_select ".search-result", count: 2
++    assert_equal [ newer.title, older.title ], css_select(".search-result__title").map(&:text)
++  end
++
++  test "search only shows cards from boards the user can currently access" do
++    logout_and_sign_in_as :jz
++    accessible = create_card(title: "cobalt-access-marker", board: boards(:writebook))
++    inaccessible = create_card(title: "cobalt-access-marker", board: boards(:private))
++
++    get search_path, params: { q: "cobalt-access-marker" }
++
++    assert_response :success
++    assert_select ".search-result", count: 1
++    assert_equal [ accessible.id ], css_select(".search-result").map { |result| result["data-card-id"] }
++    assert_not_includes css_select(".search-result").map { |result| result["data-card-id"] }, inaccessible.id
++  end
++
++  test "removing board access removes its cards from subsequent searches" do
++    card = create_card(title: "cobalt-revoked-access-marker", board: boards(:private))
++
++    get search_path, params: { q: "cobalt-revoked-access-marker" }
++    assert_select ".search-result", count: 1
++
++    boards(:private).accesses.find_by!(user: users(:kevin)).destroy!
++
++    get search_path, params: { q: "cobalt-revoked-access-marker" }
++    assert_response :success
++    assert_select ".search-result", count: 0
++    assert_not_includes css_select(".search-result").map { |result| result["data-card-id"] }, card.id
++  end
++
++  test "search never displays draft cards or comments belonging to draft cards" do
++    create_card(title: "cobalt-draft-page-marker", description: "cobalt-draft-page-marker", status: :drafted)
++
++    card = create_card(title: "Published before draft comment")
++    card.comments.create!(body: "cobalt-draft-page-marker", creator: users(:kevin))
++    card.update!(status: :drafted)
++
++    get search_path, params: { q: "cobalt-draft-page-marker" }
++
++    assert_response :success
++    assert_select ".search-result", count: 0
++  end
++
++  test "search without a term shows no card results" do
++    create_card(title: "cobalt-empty-query-marker")
++
++    get search_path
++
++    assert_response :success
++    assert_select ".search-result", count: 0
++  end
++
++  private
++    def create_card(board: boards(:writebook), **attributes)
++      board.cards.create!({ title: "Search page test card", creator: users(:kevin), status: :published }.merge(attributes))
++    end
++end
+diff --git a/test/models/card/search_test.rb b/test/models/card/search_test.rb
+new file mode 100644
+index 0000000..e45a097
+--- /dev/null
++++ b/test/models/card/search_test.rb
+@@ -0,0 +1,73 @@
++require "test_helper"
++
++class Card::SearchTest < ActiveSupport::TestCase
++  setup do
++    Current.session = sessions(:kevin)
++  end
++
++  test "search finds published cards by title and returns a relation" do
++    card = create_card(title: "cobalt-title-marker")
++
++    results = Card.search("cobalt-title-marker")
++
++    assert_kind_of ActiveRecord::Relation, results
++    assert_includes results, card
++  end
++
++  test "search is partial and case-insensitive" do
++    card = create_card(title: "A cobalt phrase")
++
++    assert_includes Card.search("COBALT"), card
++  end
++
++  test "search finds cards by description" do
++    card = create_card(title: "Unrelated description result", description: "cobalt-description-marker")
++
++    assert_includes Card.search("cobalt-description-marker"), card
++  end
++
++  test "search finds cards by a comment body" do
++    card = create_card(title: "Unrelated comment result")
++    card.comments.create!(body: "cobalt-comment-marker", creator: users(:kevin))
++
++    assert_includes Card.search("cobalt-comment-marker"), card
++  end
++
++  test "search returns cards once in newest-first order" do
++    older = newer = nil
++
++    travel_to Time.utc(2025, 1, 1, 12) do
++      older = create_card(title: "cobalt-order-marker")
++    end
++
++    travel_to Time.utc(2025, 1, 2, 12) do
++      newer = create_card(title: "cobalt-order-marker", description: "cobalt-order-marker")
++      newer.comments.create!(body: "cobalt-order-marker", creator: users(:kevin))
++    end
++
++    results = Card.search("cobalt-order-marker").where(board: boards(:writebook))
++
++    assert_equal [ newer, older ], results.to_a
++  end
++
++  test "search excludes draft cards and comments on cards that became drafts" do
++    create_card(title: "cobalt-draft-marker", description: "cobalt-draft-marker", status: :drafted)
++
++    card = create_card(title: "Unrelated before becoming a draft")
++    card.comments.create!(body: "cobalt-draft-marker", creator: users(:kevin))
++    card.update!(status: :drafted)
++
++    assert_empty Card.search("cobalt-draft-marker")
++  end
++
++  test "search with a blank term returns no cards" do
++    create_card(title: "Anything at all")
++
++    assert_empty Card.search("   ")
++  end
++
++  private
++    def create_card(**attributes)
++      boards(:writebook).cards.create!({ title: "Search test card", creator: users(:kevin), status: :published }.merge(attributes))
++    end
++end

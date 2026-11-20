@@ -1,0 +1,114 @@
+1			
+2			
+3	2026-11-16T07:00:34Z	0	pwd && ls -la && find . -maxdepth 2 -type f | sed 's#^./##' | sort | head -200
+4	2026-11-16T07:00:38Z	0,127,0,0	cat AGENTS.md && printf '\\n--- SaaS instructions ---\\n' && cat saas/AGENTS.md ; rg -n -i "entropy|entropy sweep|entropy_score|entropy.*card|Card.*entropy" app c
+5	2026-11-16T07:00:41Z	0,0,0,0	cat STYLE.md; printf '\\n--- mode ---\\n'; if [ -f tmp/saas.txt ]; then echo 'SaaS enabled'; else echo 'SaaS disabled'; fi ; grep -RInE "entropy|auto_postpone_all
+6	2026-11-16T07:00:50Z	0,0,0,0	sed -n '1,180p' test/models/card/entropic_test.rb; printf '\\n--- stall test ---\\n'; sed -n '1,130p' test/models/card/stallable_test.rb; printf '\\n--- postponabl
+7	2026-11-16T07:00:55Z	1,0,0,0	cat lib/rails_ext/active_record_date_arithmetic.rb; grep -RIn "ActiveRecordDateArithmetic\\|date_arithmetic" config lib ; sed -n '1,120p' app/models/card/closeab
+8	2026-11-16T07:01:07Z	0,1,0,0	grep -nE '^    (rails|activerecord|sqlite3) \\(' Gemfile.lock; grep -n 'adapter' config/database.yml ; bin/rails runner 'puts ActiveRecord::Base.connection.adapt
+9	2026-11-16T07:01:11Z	0,123,0	RAILS_ENV=test bin/rails runner 'puts Card.due_to_be_postponed.to_sql; puts Card.due_to_be_postponed.explain' ; find db/migrate -maxdepth 1 -type f | sort | tai
+10	2026-11-16T07:01:14Z	0	grep -RIn "index_cards_on_account_id_and_last_active_at_and_status\\|account_id.*last_active_at.*status\\|remove_index.*last_active_at" db/migrate; RAILS_ENV=test
+11	2026-11-16T07:02:14Z	0,0,0	sed -n '1,250p' app/models/account.rb; grep -RIn "def system_user\\|has_one.*system_user\\|belongs_to.*system" app/models ; sed -n '1,140p' app/models/concerns/ev
+12	2026-11-16T07:03:22Z	0,0,0	grep -n -E 'enum :role|def system|role' app/models/user.rb | head -50; sed -n '1,140p' app/models/user.rb ; grep -RIn "Board.includes\\|boards.includes\\|find_eac
+13	2026-11-16T07:04:36Z	0,0,0	sed -n '63,105p' db/schema_sqlite.rb; sed -n '171,182p' db/schema_sqlite.rb; sed -n '218,235p' db/schema_sqlite.rb; sed -n '285,296p' db/schema_sqlite.rb; grep 
+14	2026-11-16T07:05:41Z	0,0,0	find app/models/event -type f -maxdepth 2 -print -exec sed -n '1,200p' {} \\; ; grep -RIn "event_was_created\\|SystemCommenter" app/models ; grep -RIn "belongs_to
+15	2026-11-16T07:06:30Z	0	RAILS_ENV=test bin/rails runner 'account_id = Account.first&.id || "0000000000000000000000000"; rel = Card.where(account_id: account_id, last_active_at: ..(Time
+16	2026-11-16T07:07:57Z	0	cat config/initializers/uuid_primary_keys.rb; sed -n '1,100p' db/migrate/20251111122540_initial_schema.rb; sed -n '1,100p' db/seeds.rb
+17	2026-11-16T07:09:55Z	1	RAILS_ENV=test bin/rails runner 'puts "accounts=#{Account.count} cards=#{Card.count}"; p ActiveRecord::Type.lookup(:uuid, adapter: :sqlite3).generate; puts Acti
+18	2026-11-16T07:10:04Z	0,0,2	cat test/fixtures/accounts.yml | head -120; cat test/fixtures/boards.yml | head -100; cat test/fixtures/users.yml | head -100; cat test/fixtures/entropies.yml |
+19	2026-11-16T07:10:15Z	1,0	RAILS_ENV=test bin/rails runner 't=ActiveRecord::Type::Uuid; p t.methods(false); p t.instance_methods(false); p ActiveRecord::Base.attribute_types["id"].class' 
+20	2026-11-16T07:12:01Z	0	RAILS_ENV=test bin/rails runner 'p ActiveRecord::Type::Uuid.generate; p ActiveRecord::Type::Uuid.hex_to_base36(SecureRandom.hex(16)); p ActiveRecord::Type.looku
+21	2026-11-16T07:12:09Z	0	RAILS_ENV=test bin/rails test test/models/card/entropic_test.rb test/models/card/stallable_test.rb
+22	2026-11-16T07:13:33Z	0	cat <<'RUBY' > /tmp/reproduce_entropy_sweep.rb require "benchmark" connection = ActiveRecord::Base.connection connection.transaction do   stamp = Time.current  
+23	2026-11-16T07:14:46Z	0	RAILS_ENV=test bin/rails runner 'a=Account.find_by!(name: "Entropy performance repro"); scope=Card.active.where(account_id: a.id, board_id: a.boards.ids).where(
+24	2026-11-16T07:15:20Z	0	grep -RIn -A55 "class_methods do" app/models | head -260; grep -RIn "private$" app/models | head -100
+25	2026-11-16T07:15:22Z	0	cat app/models/board/auto_postponing.rb; sed -n '1,140p' app/models/event.rb; sed -n '1,160p' app/models/card/assignable.rb; cat app/models/card/eventable.rb
+26	2026-11-16T07:16:56Z	0	RAILS_ENV=test bin/rails runner 'Account.includes(:entropy, boards: :entropy).where(name: "Entropy performance repro").find_each { |account| board = account.boa
+27	2026-11-16T07:17:06Z	0,0,0	cat app/controllers/cards/boards_controller.rb; grep -RIn "move_to(\\|update!.*board:.*\\|board_id.*=" app | grep -E 'Card|card' | head -200 ; grep -RIn "cards.cr
+28	2026-11-16T07:17:33Z	0,0,0	grep -RIn "class_methods do" app/models | head -100 ; grep -RIn -A35 "class_methods do" app/models | head -300 ; sed -n '1,100p' app/models/concerns/storage/tot
+29	2026-11-16T07:18:19Z	0	RAILS_ENV=test bin/rails runner 'a=Account.find_by!(name: "Entropy performance repro"); now=Time.now; sql=ActiveRecord::Base.connection.date_subtract("?", "?");
+30	2026-11-16T07:18:37Z	0	RAILS_ENV=test bin/rails runner 'a=Account.find_by!(name: "Entropy performance repro"); rel=Card.active.where(account_id: a.id, last_active_at: ..(Time.current 
+31	2026-11-16T07:18:54Z	0	RAILS_ENV=test bin/rails runner 'a=Account.find_by!(name: "Entropy performance repro"); Card.where(account_id: a.id).update_all(last_active_at: 1.year.ago); rel
+32	2026-11-16T07:19:11Z	0	grep -RIn "def find_each\\|def find_in_batches\\|def in_batches" /usr/local/bundle/bundler/gems/rails-d0e506f131fa/activerecord/lib/active_record/relation/batches
+33	2026-11-16T07:19:44Z	0	RAILS_ENV=test bin/rails runner 'a=Account.find_by!(name: "Entropy performance repro"); cutoff=Time.current - a.entropy.auto_postpone_period; [[:id, "cards.id"]
+34	2026-11-16T07:19:54Z	0	sed -n '250,440p' /usr/local/bundle/bundler/gems/rails-d0e506f131fa/activerecord/lib/active_record/relation/batches.rb
+35	2026-11-16T07:20:02Z	0	sed -n '440,545p' /usr/local/bundle/bundler/gems/rails-d0e506f131fa/activerecord/lib/active_record/relation/batches.rb
+36	2026-11-16T07:24:34Z	0	RAILS_ENV=test bin/rails runner 'a=Account.find_by!(name: "Entropy performance repro"); c=ActiveRecord::Base.connection; c.execute("CREATE INDEX temp_entropy_id
+37	2026-11-16T07:24:57Z	0	RAILS_ENV=test bin/rails runner 'c=ActiveRecord::Base.connection; c.execute("CREATE INDEX IF NOT EXISTS temp_entropy_idx ON cards(account_id,last_active_at,stat
+38	2026-11-16T07:25:42Z	0	RAILS_ENV=test bin/rails runner 'c=ActiveRecord::Base.connection; c.execute("CREATE INDEX IF NOT EXISTS temp_entropy_idx ON cards(account_id,last_active_at,stat
+39	2026-11-16T07:27:13Z	0	RAILS_ENV=test bin/rails runner 'a=Account.find_by!(name: "Entropy performance repro"); cutoff=Time.current-a.entropy.auto_postpone_period; hi=Card.where(accoun
+40	2026-11-16T07:27:24Z	0	RAILS_ENV=test bin/rails runner 'c=ActiveRecord::Base.connection; c.execute("CREATE INDEX IF NOT EXISTS temp_entropy_idx2 ON cards(account_id,status,last_active
+41	2026-11-16T07:28:10Z	0,0	cat lib/fizzy.rb; sed -n '1,200p' bin/ci; grep -RIn "schema_sqlite\\|schema.rb\\|db:schema:dump\\|db:migrate" .github bin config | head -200 ; ls -l db/schema.rb d
+42	2026-11-16T07:28:34Z	0	cat <<'RUBY' > /tmp/benchmark_entropy_batches.rb require "benchmark" a = Account.find_by!(name: "Entropy performance repro") now = Time.current cutoff = now - a
+43	2026-11-16T07:29:51Z	0	RAILS_ENV=test bin/rails runner 'c=ActiveRecord::Base.connection; c.execute("CREATE INDEX IF NOT EXISTS temp_entropy_idx2 ON cards(account_id,status,last_active
+44	2026-11-16T07:30:44Z	0	RAILS_ENV=test bin/rails runner 'c=ActiveRecord::Base.connection; c.execute("CREATE INDEX IF NOT EXISTS temp_entropy_idx2 ON cards(account_id,status,last_active
+45	2026-11-16T07:31:02Z	0	RAILS_ENV=test bin/rails runner 'a=Account.find_by!(name: "Entropy performance repro"); cutoff=Time.current-a.entropy.auto_postpone_period; scope=Card.active.wh
+46	2026-11-16T07:31:20Z	0	grep -RIn "where(.*last_active_at\\|last_active_at:.*\\.\\.\\|last_active_at.*order\\|order.*last_active_at\\|latest" app/models app/controllers | head -300; grep -RI
+47	2026-11-16T07:40:32Z	0	cat db/migrate/20251113163145_ensure_account_id_index.rb; grep -RIn "account_id:.*last_active_at\\|last_active_at.*status\\|last_active_at.*account" app test | he
+48	2026-11-16T07:42:06Z	0	grep -RIn "Moved.*Not Now\\|auto_postponed\\|system.*comment\\|SystemCommenter" test/models test | head -200; sed -n '1,120p' test/models/card/eventable/system_com
+49	2026-11-16T07:42:19Z	1,0,0	cat app/models/card/not_now.rb; cat app/models/card/closure.rb ; grep -RIn "Card::NotNow\\|create_not_now\\|not_now" app/models/card app/models | head -150 ; grep
+50	2026-11-16T07:43:28Z	1	sed -n '1,130p' test/models/card/postponable_test.rb; sed -n '1,130p' app/models/card/eventable/system_commenter.rb; grep -n 'CREATE TABLE "cards"' db/schema_sq
+51	2026-11-16T07:44:55Z	0	python3 - <<'PY' from pathlib import Path path = Path('app/models/card/entropic.rb') text = path.read_text() old = '''  class_methods do     def auto_postpone_a
+52	2026-11-16T07:45:03Z	0	ruby - <<'RUBY' path = 'app/models/card/entropic.rb' text = File.read(path) old = <<~'OLD'   class_methods do     def auto_postpone_all_due       due_to_be_post
+53	2026-11-16T07:45:11Z	0	ruby - <<'RUBY' path = 'app/models/card/entropic.rb' text = File.read(path) replacement = <<~'BLOCK'     class_methods do       def auto_postpone_all_due       
+54	2026-11-16T07:46:36Z	0	RAILS_ENV=test bin/rails runner 'c=ActiveRecord::Base.connection; c.execute("CREATE INDEX IF NOT EXISTS temp_entropy_idx3 ON cards(account_id,status,board_id,la
+55	2026-11-16T07:47:35Z	0	RAILS_ENV=test bin/rails runner 'c=ActiveRecord::Base.connection; c.execute("CREATE INDEX temp_id_idx ON cards(account_id,status,id)"); a=Account.find_by!(name:
+56	2026-11-16T07:47:49Z	0	ruby - <<'RUBY' path = 'app/models/card/entropic.rb' text = File.read(path) start = text.index("\\nclass_methods do\\n") finish = text.index("\\n\\n  def entropy", 
+57	2026-11-16T07:48:06Z	0	grep -RIn "move.*board\\|move_to\\|board_id" test/models/card_test.rb test/models/card test/controllers/cards/boards_controller_test.rb | head -200
+58	2026-11-16T07:48:16Z	0	sed -i 's/[[:space:]]*$//' app/models/card/entropic.rb && cat db/migrate/20261116120000_add_entropy_sweep_index_to_cards.rb && ruby -c app/models/card/entropic.
+59	2026-11-16T07:48:31Z	0	RAILS_ENV=test bin/rails db:migrate
+60	2026-11-16T07:48:37Z	0,0,0	git status --short && git diff -- db/schema_sqlite.rb | cat ; sed -n '218,237p' db/schema.rb; sed -n '218,237p' db/schema_sqlite.rb ; RAILS_ENV=test bin/rails r
+61	2026-11-16T07:48:41Z	0	git diff -- db/cable_schema.rb; git diff --stat; git diff --check
+62	2026-11-16T07:49:22Z	0	cat app/models/card/activity_spike.rb; grep -RIn "has_one :closure\\|has_one :activity_spike\\|has_one :not_now" app/models/card
+63	2026-11-16T07:49:55Z	0	ruby - <<'RUBY' path = 'app/models/card/entropic.rb' text = File.read(path) start = text.index("  class_methods do\\n") finish = text.index("\\n  def entropy", st
+64	2026-11-16T07:50:29Z	0	sed -i 's/\\[ :account_id, :status, :last_active_at, :id \\]/[ :account_id, :status, :board_id, :last_active_at, :id ]/' db/migrate/20261116120000_add_entropy_swe
+65	2026-11-16T07:50:41Z	1	grep -n -E 'board:|status:' test/fixtures/cards.yml; grep -RIn 'private_uuid' test/fixtures/cards.yml
+66	2026-11-16T07:50:46Z	1	RAILS_ENV=test bin/rails db:rollback STEP=1 && RAILS_ENV=test bin/rails db:migrate && git checkout -- db/cable_schema.rb && RAILS_ENV=test bin/rails runner 'a=A
+67	2026-11-16T07:50:55Z	0	RAILS_ENV=test bin/rails -T db:rollback | head -40; RAILS_ENV=test bin/rails -T db:migrate | head -40
+68	2026-11-16T07:51:10Z	1	RAILS_ENV=test bin/rails db:rollback:primary STEP=1 && RAILS_ENV=test bin/rails db:migrate:primary && git checkout -- db/cable_schema.rb && git status --short
+69	2026-11-16T07:51:19Z	0	RAILS_ENV=test bin/rails runner 'connection = ActiveRecord::Base.connection; connection.remove_index(:cards, name: :index_cards_for_entropy_sweep); connection.a
+70	2026-11-16T07:52:36Z	0	RAILS_ENV=test bin/rails test test/models/card/entropic_test.rb test/models/card/stallable_test.rb test/models/card/postponable_test.rb
+71	2026-11-16T07:53:06Z	0	ruby - <<'RUBY' path = 'test/models/card/entropic_test.rb' text = File.read(path) anchor = <<~'TEST'   test "auto postpone all due works properly cross-account"
+72	2026-11-16T07:53:11Z	0	ruby - <<'RUBY' path = 'test/models/card/entropic_test.rb' text = File.read(path) anchor = "  test \\"auto postpone all due works properly cross-account\\" do\\n" 
+73	2026-11-16T07:53:22Z	2	ruby - <<'RUBY' path = 'test/models/card/entropic_test.rb' text = File.read(path) start = text.index("test \\"auto postpone all due respects each board's entropy
+74	2026-11-16T07:53:38Z	0	sed -i 's/[[:space:]]*$//' test/models/card/entropic_test.rb && git diff --check && sed -n '71,87p' test/models/card/entropic_test.rb
+75	2026-11-16T07:53:43Z	0,0,0	RAILS_ENV=test bin/rails test test/models/card/entropic_test.rb ; bin/rubocop app/models/card/entropic.rb test/models/card/entropic_test.rb db/migrate/202611161
+76	2026-11-16T07:53:58Z	1,0	RAILS_ENV=test bin/rails runner 'puts "repro account: #{Account.where(name: "Entropy performance repro").count}; puts "cards: #{Card.count}"; account = accounts
+77	2026-11-16T07:54:24Z	0	cat <<'RUBY' > /tmp/check_entropy_sweep_plan.rb puts "repro accounts: #{Account.where(name: 'Entropy performance repro').count}" puts "cards: #{Card.count}" acc
+78	2026-11-16T07:54:36Z	0	cat <<'RUBY' > /tmp/reproduce_entropy_sweep.rb require "benchmark" connection = ActiveRecord::Base.connection connection.transaction do   stamp = Time.current  
+79	2026-11-16T07:56:32Z	124	cat <<'RUBY' > /tmp/benchmark_entropy_keysets.rb require "benchmark" connection = ActiveRecord::Base.connection connection.transaction do   stamp = Time.current
+80	2026-11-16T08:01:41Z	0	RAILS_ENV=test bin/rails runner 'puts "accounts=#{Account.count} cards=#{Card.count}"; p ActiveRecord::Base.connection.select_value("PRAGMA database_list")'
+81	2026-11-16T08:01:51Z	124	sed -i '1i STDOUT.sync = true' /tmp/benchmark_entropy_keysets.rb; sed -i 's/100_000.times/10_000.times/' /tmp/benchmark_entropy_keysets.rb; sed -i '/scope = Car
+82	2026-11-16T08:07:05Z	0	cat <<'RUBY' > /tmp/check_entropy_cursor.rb STDOUT.sync = true require "benchmark" connection = ActiveRecord::Base.connection connection.transaction do   stamp 
+83	2026-11-16T08:07:20Z	0	RAILS_ENV=test bin/rails test
+84	2026-11-16T08:08:21Z	0	cat <<'RUBY' > /tmp/test_entropy_batch_boundaries.rb STDOUT.sync = true connection = ActiveRecord::Base.connection connection.transaction do   stamp = Time.curr
+85	2026-11-16T08:09:01Z	2	ruby - <<'RUBY' path = 'app/models/card/eventable/system_commenter.rb' text = File.read(path) text.sub!("    card.comments.create! creator: card.account.system_
+86	2026-11-16T08:09:09Z	0	ruby - <<'EOF_RUBY' path = 'app/models/card/eventable/system_commenter.rb' text = File.read(path) old = "    card.comments.create! creator: card.account.system_
+87	2026-11-16T08:09:15Z	0	ruby - <<'EOF_RUBY' path = 'app/models/card/eventable/system_commenter.rb' text = File.read(path) old = <<~'OLD'   private   def comment_creator     if event.cr
+88	2026-11-16T08:09:21Z	0	ruby - <<'RUBY' path = 'app/models/card/eventable/system_commenter.rb' text = File.read(path) text.sub!("  private\\n  def comment_creator\\n    if event.creator.
+89	2026-11-16T08:09:27Z	0,0	RAILS_ENV=test bin/rails test test/models/card/eventable/system_commenter_test.rb test/models/card/entropic_test.rb ; bin/rubocop app/models/card/entropic.rb ap
+90	2026-11-16T08:09:51Z	0	cat app/models/comment.rb; cat app/models/card/activity_spike.rb; cat app/models/card/closeable.rb; cat app/models/card/postponable.rb
+91	2026-11-16T08:10:16Z	0	cat app/models/card/watchable.rb; cat app/models/card/stallable.rb; cat app/models/card/broadcastable.rb
+92	2026-11-16T08:10:39Z	0	ruby - <<'RUBY' path = 'app/models/card/entropic.rb' text = File.read(path) old = '.where(account_id: account.id, board_id: board.id, last_active_at: ..cutoff)\\
+93	2026-11-16T08:10:43Z	0	ruby - <<'RUBY' path = 'app/models/card/entropic.rb' text = File.read(path) old = "              .where(account_id: account.id, board_id: board.id, last_active_
+94	2026-11-16T08:11:03Z	0	ruby - <<'RUBY' path = 'app/models/card/eventable/system_commenter.rb' text = File.read(path) text.sub!("      if event.creator.system? && event.creator.account
+95	2026-11-16T08:11:48Z	0,0,0	RAILS_ENV=test bin/rails test test/models/card/entropic_test.rb test/models/card/eventable/system_commenter_test.rb test/models/card/stallable_test.rb test/mode
+96	2026-11-16T08:16:33Z	0,0,0	RAILS_ENV=test bin/rails runner /tmp/reproduce_entropy_sweep.rb ; RAILS_ENV=test bin/rails test ; git diff --check && git diff -- app/models/card/entropic.rb ap
+97	2026-11-16T08:17:58Z	0	ruby - <<'RUBY' path = 'app/models/card/entropic.rb' text = File.read(path) text.sub!("      now = Time.current\\n\\n      Account.includes", "      now = Time.cu
+98	2026-11-16T08:18:10Z	0	ruby - <<'RUBY' path = 'app/models/card/entropic.rb' text = File.read(path) text.sub!("      Account.includes(:entropy, boards: :entropy).find_each do |account|
+99	2026-11-16T08:18:45Z	0	sed -i 's/where(account_id: account.id, board_id: board.id, last_active_at:/where(board_id: board.id, last_active_at:/' /tmp/reproduce_entropy_sweep.rb sed -i '
+100	2026-11-16T08:19:14Z	0	sed -n '1,125p' app/controllers/cards_controller.rb; sed -n '1,100p' app/models/user/accessor.rb; grep -RIn 'last_active_at:' app | head -80
+101	2026-11-16T08:20:30Z	0	cat <<'RUBY' > /tmp/test_typed_uuid_cursor.rb STDOUT.sync = true require "benchmark" connection = ActiveRecord::Base.connection connection.transaction do   stam
+102	2026-11-16T08:20:59Z	0	cat <<'RUBY' > /tmp/compare_entropy_queries.rb require "benchmark" connection = ActiveRecord::Base.connection connection.transaction do   stamp = Time.current  
+103	2026-11-16T08:22:43Z	0	cat <<'RUBY' > /tmp/compare_entropy_index_orders.rb require "benchmark" connection = ActiveRecord::Base.connection connection.transaction do   stamp = Time.curr
+104	2026-11-16T08:24:00Z	0	ruby - <<'RUBY' migration = 'db/migrate/20261116120000_add_entropy_sweep_index_to_cards.rb' text = File.read(migration) text.sub!("    add_index :cards, [ :boar
+105	2026-11-16T08:24:38Z	0	RAILS_ENV=test bin/rails runner 'connection = ActiveRecord::Base.connection; indexes = connection.indexes(:cards); index = indexes.find { |item| item.name == "i
+106	2026-11-16T08:25:17Z	0	RAILS_ENV=test bin/rails -T db:schema:load | head -30; git status --short; git diff --check; git diff --stat
+107	2026-11-16T08:25:34Z	0,0,0	RAILS_ENV=test bin/rails test ; bin/rubocop app/models/card/entropic.rb app/models/card/eventable/system_commenter.rb test/models/card/entropic_test.rb test/mod
+108	2026-11-16T08:26:09Z	0	grep -RIn "due_to_be_postponed" app test
+109	2026-11-16T08:27:06Z	0	ruby - <<'RUBY' path = 'app/models/card/entropic.rb' text = File.read(path) old = <<~'OLD'   Account.includes(:entropy, boards: :entropy).find_each do |account|
+110	2026-11-16T08:27:28Z	0	ruby - <<'RUBY' path = 'app/models/card/entropic.rb' text = File.read(path) pattern = /^      Account\\.includes.*?^      end(?=\\n    end\\n  end\\n\\n  def entropy
+111	2026-11-16T08:27:53Z	0,0,0,0	RAILS_ENV=test bin/rails test ; bin/rubocop app/models/card/entropic.rb app/models/card/eventable/system_commenter.rb test/models/card/entropic_test.rb test/mod
+112	2026-11-16T08:28:47Z	0	cat <<'RUBY' > /tmp/compare_entropy_hybrid.rb require "benchmark" connection = ActiveRecord::Base.connection connection.transaction do   stamp = Time.current   
+113	2026-11-16T08:29:42Z	0	RAILS_ENV=test bin/rails db:migrate:down:primary VERSION=20261116120000 && RAILS_ENV=test bin/rails db:migrate:up:primary VERSION=20261116120000 && git checkout
+114	2026-11-16T08:30:32Z		grep -RIn "config.time_zone\\|default_timezone" config/application.rb config/initializers || true; git diff --check && git status --short && git diff -- app/mode

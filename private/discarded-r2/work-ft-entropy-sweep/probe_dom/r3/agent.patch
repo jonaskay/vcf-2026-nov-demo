@@ -1,0 +1,167 @@
+diff --git a/app/models/card/entropic.rb b/app/models/card/entropic.rb
+index ebaad78..7d2ff91 100644
+--- a/app/models/card/entropic.rb
++++ b/app/models/card/entropic.rb
+@@ -2,12 +2,22 @@ module Card::Entropic
+   extend ActiveSupport::Concern
+ 
+   included do
+-    scope :due_to_be_postponed, -> do
+-      active
+-        .joins(board: :account)
+-        .left_outer_joins(board: :entropy)
+-        .joins("LEFT OUTER JOIN entropies AS account_entropies ON account_entropies.account_id = accounts.id AND account_entropies.container_type = 'Account' AND account_entropies.container_id = accounts.id")
+-        .where("last_active_at <= #{connection.date_subtract('?', 'COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period)')}", Time.now)
++    # Stored entropy periods can fall outside the UI options, so use the actual database minimum.
++    scope :due_to_be_postponed, ->(now: Time.current, minimum_period: Entropy.minimum(:auto_postpone_period)) do
++      if minimum_period
++        minimum_period_cutoff = connection.date_subtract("?", "?")
++
++        active
++          .joins(board: :account)
++          .left_outer_joins(board: :entropy)
++          .joins("LEFT OUTER JOIN entropies AS account_entropies ON account_entropies.account_id = accounts.id AND account_entropies.container_type = 'Account' AND account_entropies.container_id = accounts.id")
++          # Constraining account_id lets SQLite use the tenant-leading activity index.
++          .where(account_id: Account.select(:id))
++          .where("cards.last_active_at <= #{minimum_period_cutoff}", now, minimum_period)
++          .where("last_active_at <= #{connection.date_subtract('?', 'COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period)')}", now)
++      else
++        none
++      end
+     end
+ 
+     scope :postponing_soon, -> do
+@@ -25,8 +35,17 @@ module Card::Entropic
+ 
+   class_methods do
+     def auto_postpone_all_due
+-      due_to_be_postponed.find_each do |card|
+-        card.auto_postpone(user: card.account.system_user)
++      now = Time.current
++      minimum_period = Entropy.minimum(:auto_postpone_period)
++
++      if minimum_period
++        system_users = {}
++        due_cards = due_to_be_postponed(now: now, minimum_period: minimum_period)
++
++        due_cards.find_each(cursor: [ :account_id, :last_active_at, :id ]) do |card|
++          system_user = system_users[card.account_id] ||= card.account.system_user
++          card.auto_postpone(user: system_user)
++        end
+       end
+     end
+   end
+diff --git a/config/brakeman.ignore b/config/brakeman.ignore
+index 25441a6..d919c47 100644
+--- a/config/brakeman.ignore
++++ b/config/brakeman.ignore
+@@ -118,26 +118,26 @@
+     {
+       "warning_type": "SQL Injection",
+       "warning_code": 0,
+-      "fingerprint": "bbd8fe3cbbc6b393df770d3142d6fa46e2b9441b21f48a52175211acaae4efad",
++      "fingerprint": "0e0de26e85b817b983c9e4d73812dacac7db54080ec6f5dfbbcc8b2202e93473",
+       "check_name": "SQL",
+       "message": "Possible SQL injection",
+       "file": "app/models/card/entropic.rb",
+-      "line": 10,
++      "line": 14,
+       "link": "https://brakemanscanner.org/docs/warning_types/sql_injection/",
+-      "code": "active.joins(:board => :account).left_outer_joins(:board => :entropy).joins(\"LEFT OUTER JOIN entropies AS account_entropies ON account_entropies.account_id = accounts.id AND account_entropies.container_type = 'Account' AND account_entropies.container_id = accounts.id\").where(\"last_active_at <= #{connection.date_subtract(\"?\", \"COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period)\")}\", Time.now)",
++      "code": "active.joins(:board => :account).left_outer_joins(:board => :entropy).joins(\"LEFT OUTER JOIN entropies AS account_entropies ON account_entropies.account_id = accounts.id AND account_entropies.container_type = 'Account' AND account_entropies.container_id = accounts.id\").where(:account_id => Account.select(:id)).where(\"cards.last_active_at <= #{connection.date_subtract(\"?\", \"?\")}\", Time.current, Entropy.minimum(:auto_postpone_period))",
+       "render_path": null,
+       "location": {
+         "type": "method",
+         "class": "Card::Entropic",
+         "method": null
+       },
+-      "user_input": "connection.date_subtract(\"?\", \"COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period)\")",
++      "user_input": "connection.date_subtract(\"?\", \"?\")",
+       "confidence": "Weak",
+       "cwe_id": [
+         89
+       ],
+-      "note": "No user input allowed"
++      "note": "No user input allowed; both date arithmetic expressions and period values are fixed or bound."
+     }
+   ],
+-  "brakeman_version": "8.0.1"
++  "brakeman_version": "8.0.4"
+ }
+diff --git a/test/models/card/entropic_test.rb b/test/models/card/entropic_test.rb
+index 848cfa7..f363fec 100644
+--- a/test/models/card/entropic_test.rb
++++ b/test/models/card/entropic_test.rb
+@@ -85,4 +85,72 @@ class Card::EntropicTest < ActiveSupport::TestCase
+ 
+     assert_equal(cards(:logo, :radio).to_set, Card.postponing_soon.to_set)
+   end
++
++  test "due sweep uses stored periods, board overrides, and inclusive boundaries" do
++    freeze_time
++
++    entropies("37s_account").update_column(:auto_postpone_period, 7.days.to_i)
++    entropies(:writebook_board).update_column(:auto_postpone_period, 999.days.to_i)
++    entropies("initech_account").update_column(:auto_postpone_period, 1.hour.to_i)
++    entropies(:miltons_wish_list_board).destroy
++
++    cards(:logo).update_column(:last_active_at, 8.days.ago)
++    cards(:layout).update_column(:last_active_at, 999.days.ago)
++    cards(:text).update_column(:last_active_at, 1_000.days.ago)
++    cards(:buy_domain).postpone
++    cards(:buy_domain).update_column(:last_active_at, 1_001.days.ago)
++    cards(:shipping, :unfinished_thoughts).each do |card|
++      card.update_column(:last_active_at, 1_001.days.ago)
++    end
++    cards(:radio).update_column(:last_active_at, 1.hour.ago)
++    cards(:paycheck).update_column(:last_active_at, 30.minutes.ago)
++
++    due_cards_before_sweep = Card.due_to_be_postponed.to_a
++    assert_equal cards(:layout, :text, :radio).map(&:id).sort, due_cards_before_sweep.map(&:id).sort
++    assert_empty due_cards_before_sweep.map(&:id) & Card.postponing_soon.pluck(:id)
++
++    already_postponed_ids = Card.postponed.pluck(:id)
++
++    Card.auto_postpone_all_due
++
++    newly_postponed_ids = Card.postponed.pluck(:id) - already_postponed_ids
++    assert_equal due_cards_before_sweep.map(&:id).sort, newly_postponed_ids.sort
++    due_cards_before_sweep.each { |card| assert card.reload.postponed? }
++    assert_equal accounts("initech").system_user, cards(:radio).postponed_by
++    assert_not cards(:logo).reload.postponed?, "the board period overrides the shorter account period"
++    assert_not cards(:paycheck).reload.postponed?
++    assert cards(:buy_domain).reload.postponed?, "already-postponed cards are not due candidates"
++    assert_not cards(:shipping).reload.postponed?, "closed cards are not due candidates"
++    assert_not cards(:unfinished_thoughts).reload.postponed?, "drafted cards are not due candidates"
++  end
++
++  test "due sweep batch query uses the account activity index on SQLite" do
++    skip unless ActiveRecord::Base.connection.adapter_name == "SQLite"
++
++    now = Time.current
++    relation = Card.due_to_be_postponed(now: now)
++    cursor_account_id = accounts("37s").id
++    cursor_last_active_at = now - 91.days
++    cursor_id = cards(:layout).id
++    cursor_condition = <<~SQL.squish
++      cards.account_id > :account_id OR
++      (cards.account_id = :account_id AND cards.last_active_at > :last_active_at) OR
++      (cards.account_id = :account_id AND cards.last_active_at = :last_active_at AND cards.id > :id)
++    SQL
++
++    batch_queries = [
++      relation.reorder(account_id: :asc, last_active_at: :asc, id: :asc).limit(1_000),
++      relation
++        .where(cursor_condition, account_id: cursor_account_id, last_active_at: cursor_last_active_at, id: cursor_id)
++        .reorder(account_id: :asc, last_active_at: :asc, id: :asc)
++        .limit(1_000)
++    ]
++
++    batch_queries.each do |query|
++      plan = ActiveRecord::Base.connection.select_all("EXPLAIN QUERY PLAN #{query.to_sql}").map { |row| row["detail"] }.join("\n")
++
++      assert_includes plan, "SEARCH cards USING INDEX index_cards_on_account_id_and_last_active_at_and_status"
++      assert_no_match(/\bSCAN cards\b/, plan)
++    end
++  end
+ end

@@ -1,0 +1,155 @@
+diff --git a/app/models/card/entropic.rb b/app/models/card/entropic.rb
+index ebaad78..0c20b0d 100644
+--- a/app/models/card/entropic.rb
++++ b/app/models/card/entropic.rb
+@@ -2,12 +2,26 @@ module Card::Entropic
+   extend ActiveSupport::Concern
+ 
+   included do
+-    scope :due_to_be_postponed, -> do
+-      active
++    scope :due_to_be_postponed, ->(account = nil, period = nil, now = Time.now) do
++      period_expression = "COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period)"
++      due_cards = active
+         .joins(board: :account)
+         .left_outer_joins(board: :entropy)
+         .joins("LEFT OUTER JOIN entropies AS account_entropies ON account_entropies.account_id = accounts.id AND account_entropies.container_type = 'Account' AND account_entropies.container_id = accounts.id")
+-        .where("last_active_at <= #{connection.date_subtract('?', 'COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period)')}", Time.now)
++        .where("last_active_at <= #{connection.date_subtract('?', period_expression)}", now)
++
++      if account
++        due_cards = due_cards.where(cards: { account_id: account.id })
++      end
++
++      if period
++        # Keep an indexable timestamp range alongside the exact COALESCE predicate, with slack for date precision.
++        due_cards = due_cards
++          .where("#{period_expression} = ?", period)
++          .where("cards.last_active_at <= ?", now - period + 1.second)
++      end
++
++      due_cards
+     end
+ 
+     scope :postponing_soon, -> do
+@@ -25,8 +39,19 @@ module Card::Entropic
+ 
+   class_methods do
+     def auto_postpone_all_due
+-      due_to_be_postponed.find_each do |card|
+-        card.auto_postpone(user: card.account.system_user)
++      now = Time.now
++      # Read stored values so periods outside the current validation list are still included.
++      entropy_container_types = %w[ Account Board ]
++
++      Account.where(id: Entropy.where(container_type: entropy_container_types).select(:account_id)).find_each do |account|
++        system_user = nil
++
++        Entropy.where(account_id: account.id, container_type: entropy_container_types).distinct.pluck(:auto_postpone_period).each do |period|
++          due_to_be_postponed(account, period, now).find_each(cursor: [ :last_active_at, :id ], order: [ :asc, :asc ]) do |card|
++            system_user ||= account.system_user
++            card.auto_postpone(user: system_user)
++          end
++        end
+       end
+     end
+   end
+diff --git a/config/brakeman.ignore b/config/brakeman.ignore
+index 25441a6..e5ea5ad 100644
+--- a/config/brakeman.ignore
++++ b/config/brakeman.ignore
+@@ -118,13 +118,13 @@
+     {
+       "warning_type": "SQL Injection",
+       "warning_code": 0,
+-      "fingerprint": "bbd8fe3cbbc6b393df770d3142d6fa46e2b9441b21f48a52175211acaae4efad",
++      "fingerprint": "c5278ab75e51eef78ebef9115f8886b1437eb4836ece15b0da2512f067f96c9a",
+       "check_name": "SQL",
+       "message": "Possible SQL injection",
+       "file": "app/models/card/entropic.rb",
+-      "line": 10,
++      "line": 11,
+       "link": "https://brakemanscanner.org/docs/warning_types/sql_injection/",
+-      "code": "active.joins(:board => :account).left_outer_joins(:board => :entropy).joins(\"LEFT OUTER JOIN entropies AS account_entropies ON account_entropies.account_id = accounts.id AND account_entropies.container_type = 'Account' AND account_entropies.container_id = accounts.id\").where(\"last_active_at <= #{connection.date_subtract(\"?\", \"COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period)\")}\", Time.now)",
++      "code": "active.joins(:board => :account).left_outer_joins(:board => :entropy).joins(\"LEFT OUTER JOIN entropies AS account_entropies ON account_entropies.account_id = accounts.id AND account_entropies.container_type = 'Account' AND account_entropies.container_id = accounts.id\").where(\"last_active_at <= #{connection.date_subtract(\"?\", \"COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period)\")}\", now)",
+       "render_path": null,
+       "location": {
+         "type": "method",
+diff --git a/test/models/card/entropic_test.rb b/test/models/card/entropic_test.rb
+index 848cfa7..ea5dee3 100644
+--- a/test/models/card/entropic_test.rb
++++ b/test/models/card/entropic_test.rb
+@@ -85,4 +85,73 @@ class Card::EntropicTest < ActiveSupport::TestCase
+ 
+     assert_equal(cards(:logo, :radio).to_set, Card.postponing_soon.to_set)
+   end
++
++  test "auto postpone sweep batches cards by their effective entropy period" do
++    travel_to Time.now.change(usec: 0) do
++      now = Time.now
++      account_period = 999.days.to_i
++      board_period = 90.days.to_i
++
++      entropies("37s_account").update_column(:auto_postpone_period, account_period)
++      entropies(:writebook_board).update_column(:auto_postpone_period, board_period)
++      entropies(:private_board).destroy
++
++      account_due_card = boards(:private).cards.create!(
++        creator: users(:kevin), title: "Due by account entropy", status: :published
++      )
++      account_due_card.update!(last_active_at: now - account_period)
++
++      account_not_due_card = boards(:private).cards.create!(
++        creator: users(:kevin), title: "Not due by account entropy", status: :published
++      )
++      account_not_due_card.update!(last_active_at: now - account_period + 1.second)
++
++      cards(:text).close(user: users(:kevin))
++      cards(:text).update!(last_active_at: now - board_period)
++      cards(:buy_domain).postpone(user: users(:david))
++      cards(:buy_domain).update!(last_active_at: now - board_period)
++      cards(:unfinished_thoughts).update!(last_active_at: now - board_period)
++
++      cards(:logo).update!(last_active_at: now - board_period)
++      cards(:shipping).update!(last_active_at: now - board_period + 1.second)
++      cards(:radio).update!(last_active_at: now - board_period)
++      cards(:paycheck).update!(last_active_at: now - board_period + 1.second)
++
++      expected_due_ids = Card.due_to_be_postponed.pluck(:id).to_set
++      assert_equal [ account_due_card, cards(:logo), cards(:radio) ].map(&:id).to_set, expected_due_ids
++      assert_empty Card.postponing_soon.where(id: expected_due_ids)
++      assert_includes Card.postponing_soon, account_not_due_card
++
++      if ActiveRecord::Base.connection.adapter_name == "SQLite"
++        entropy_container_types = %w[ Account Board ]
++        accounts = Account.where(id: Entropy.where(container_type: entropy_container_types).select(:account_id))
++
++        accounts.find_each do |account|
++          periods = Entropy.where(account_id: account.id, container_type: entropy_container_types).distinct.pluck(:auto_postpone_period)
++
++          periods.each do |period|
++            batch = Card.due_to_be_postponed(account, period, now).reorder(last_active_at: :asc, id: :asc).limit(1000)
++            cursor_time = now - period
++            cursor = batch.where("cards.last_active_at > ? OR (cards.last_active_at = ? AND cards.id > ?)", cursor_time, cursor_time, cards(:logo).id)
++
++            [ batch, cursor ].each do |relation|
++              plan = ActiveRecord::Base.connection.execute("EXPLAIN QUERY PLAN #{relation.to_sql}").map { |row| row["detail"] }.join("\n")
++
++              assert_includes plan, "SEARCH cards USING INDEX index_cards_on_account_id_and_last_active_at_and_status"
++              assert_no_match(/\bSCAN cards\b/, plan)
++            end
++          end
++        end
++      end
++
++      postponed_before = Card.postponed.pluck(:id).to_set
++      Card.auto_postpone_all_due
++      newly_postponed_ids = Card.postponed.where.not(id: postponed_before.to_a).pluck(:id).to_set
++
++      assert_equal expected_due_ids, newly_postponed_ids
++      assert_equal accounts("37s").system_user, account_due_card.reload.postponed_by
++      assert_equal accounts("37s").system_user, cards(:logo).reload.postponed_by
++      assert_equal accounts(:initech).system_user, cards(:radio).reload.postponed_by
++    end
++  end
+ end

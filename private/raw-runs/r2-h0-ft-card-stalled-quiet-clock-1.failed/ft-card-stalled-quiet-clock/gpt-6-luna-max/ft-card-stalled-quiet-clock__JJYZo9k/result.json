@@ -1,0 +1,43 @@
+{
+  "trial": "ft-card-stalled-quiet-clock__JJYZo9k",
+  "task": "ft-card-stalled-quiet-clock",
+  "agent": "harnessed-miniswen",
+  "model": "openai/gpt-6-luna#max",
+  "index": 1,
+  "profile_digest": "73116e4a943eabe1",
+  "task_digest": "090fef337290aa0f",
+  "revision": {
+    "commit": "f587d5a44897f3467af2a48c0503aef4eb6acf55",
+    "dirty": true
+  },
+  "lemans_version": "1.6.0",
+  "tags": [
+    "rails",
+    "active-record",
+    "active-job",
+    "callbacks"
+  ],
+  "metadata": {
+    "category": "full-features"
+  },
+  "phases": [
+    {
+      "name": "environment_setup",
+      "started_at": "2026-11-16T07:00:04.871421Z",
+      "finished_at": "2026-11-16T07:00:26.252151Z"
+    },
+    {
+      "name": "agent",
+      "started_at": "2026-11-16T07:00:26.252188Z",
+      "finished_at": "2026-11-16T07:42:52.486024Z"
+    }
+  ],
+  "outcome": {
+    "name": "agent_error",
+    "scored": false,
+    "detail": "miniswen: the model call failed: Rate limit reached for gpt-6-luna in organization org-JKszc5d4y6LL4ypDAcr65sFp on tokens per min (TPM): Limit 2000000, Used 1988443, Requested 114204. Please try again in 3.08s. Visit https://platform.openai.com/account/rate-limits to learn more.: {\n  \"error\": {\n    \"message\": \"Rate limit reached for gpt-6-luna in organization org-JKszc5d4y6LL4ypDAcr65sFp on tokens per min (TPM): Limit 2000000, Used 1988443, Requested 114204. Please try again in 3.08s. Visit https://platform.openai.com/account/rate-limits to learn more.\",\n    \"type\": \"tokens\",\n    \"param\": null,\n    \"code\": \"rate_limit_exceeded\"\n  }\n}"
+  },
+  "duration": 2567.6,
+  "started_at": "2026-11-16T07:00:04Z",
+  "finished_at": "2026-11-16T07:42:52Z"
+}

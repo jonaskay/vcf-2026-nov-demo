@@ -1,0 +1,62 @@
+{
+  "trial": "ft-card-stalled-quiet-clock__uW74Zqh",
+  "task": "ft-card-stalled-quiet-clock",
+  "agent": "harnessed-miniswen",
+  "model": "openai/gpt-6-luna#max",
+  "index": 1,
+  "profile_digest": "73116e4a943eabe1",
+  "task_digest": "090fef337290aa0f",
+  "revision": {
+    "commit": "f587d5a44897f3467af2a48c0503aef4eb6acf55",
+    "dirty": true
+  },
+  "lemans_version": "1.6.0",
+  "tags": [
+    "rails",
+    "active-record",
+    "active-job",
+    "callbacks"
+  ],
+  "metadata": {
+    "category": "full-features"
+  },
+  "phases": [
+    {
+      "name": "environment_setup",
+      "started_at": "2026-11-16T09:42:02.237782Z",
+      "finished_at": "2026-11-16T09:42:10.017270Z"
+    },
+    {
+      "name": "agent",
+      "started_at": "2026-11-16T09:42:10.017299Z",
+      "finished_at": "2026-11-16T10:58:41.000932Z"
+    },
+    {
+      "name": "verifier",
+      "started_at": "2026-11-16T10:58:41.182440Z",
+      "finished_at": "2026-11-16T10:59:01.980430Z"
+    }
+  ],
+  "reward": 0.0,
+  "credit": 0.0,
+  "outcome": {
+    "name": "completed",
+    "scored": true
+  },
+  "usage": {
+    "input_tokens": 21620689,
+    "output_tokens": 422281,
+    "cached_tokens": 21369285,
+    "steps": 137,
+    "cost_usd": 0.45622739999999995,
+    "cost_source": {
+      "name": "model_registry",
+      "model": "openai/gpt-6-luna#max",
+      "priced_as": "openai/gpt-6-luna",
+      "registry": "ruby_llm 2.1.1 (registry 2026-11-16T09:42:09Z)"
+    }
+  },
+  "duration": 4619.7,
+  "started_at": "2026-11-16T09:42:02Z",
+  "finished_at": "2026-11-16T10:59:01Z"
+}

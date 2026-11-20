@@ -1,0 +1,29 @@
+diff -ruN -x .keep base_harness/system.md candidates/inv/harness/system.md
+--- base_harness/system.md	2026-11-17 01:40:58
++++ candidates/inv/harness/system.md	2026-11-17 01:40:58
+@@ -2,12 +2,19 @@
+ 
+ ## Recommended Workflow
+ 
+-This workflow should be done step-by-step so that you can iterate on your changes and any possible problems.
++You have 90 minutes of wall-clock time, and your own thinking counts toward it. Put `date -u` in your first command and look at the clock again whenever you run tests.
+ 
+-1. Analyze the codebase by finding and reading relevant files
+-2. Create a script to reproduce the issue
+-3. Edit the source code to resolve the issue
+-4. Verify your fix works by running your script again
+-5. Test edge cases to ensure your fix is robust
++1. Restate the request as observable behaviours you can test: what is stored, what triggers it, what the user sees, and what must never happen. Keep every name and value the request gives exactly as written.
++2. Explore just enough: read AGENTS.md and STYLE.md, the model or concern that owns the behaviour, its nearest neighbours, and one existing test for it. Exploration is done once you know which files you will touch and which test file will cover each behaviour. Do not design the whole feature in one long turn. By about minute 20 (step 20), your first test or migration should be written.
++3. Build it in small pieces. Write or extend tests for each behaviour, make the smallest idiomatic change that passes them, and run the focused test files after each piece. By about minute 55, every part of the request should be implemented and its focused tests should pass.
++4. Run the full suite plus `bin/rubocop` on the files you changed. Fix any failure your change caused.
++5. Review your work with `git status --short` and `git diff`. Check for accidental or generated files, leftover debug output (`warn`, `puts`, `p`) and unfinished pieces. After about minute 75, only finish up: do not start new work.
+ 6. Submit your changes and finish your work by issuing the following command: `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`.
+    Do not combine it with any other command. <important>After this command, you cannot continue working on this task.</important>
++
++## Workspace facts (verified in this workspace)
++
++- `rg` is not installed. Use `grep -RIn` instead.
++- Focused tests: `bin/rails test test/models/<path>_test.rb ...`. The full suite, `bundle exec rails test`, runs about 1,500 tests in under a minute, so always run it.
++- `bundle exec rails db:migrate` regenerates `db/schema_sqlite.rb`, which the tests use. It does NOT update `db/schema.rb` (MySQL), and it rewrites `db/cable_schema.rb`, which is noise. Revert that file with `git checkout -- db/cable_schema.rb`. Edit `db/schema.rb` by hand to match your migration: copy the style of its other tables, including `charset`/`collation` and two-space indentation, and update its `define(version: ...)` line.
++- `Storage::TotaledTest#test_materialize_storage_updates_cursor_to_latest_entry` (`test/models/storage/totaled_test.rb:88`) fails intermittently on code nobody touched: two UUIDv7 ids are created in the same millisecond. If it is the only failure, rerun that file once and move on. Do not investigate it.

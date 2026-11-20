@@ -1,0 +1,732 @@
+diff --git a/app/helpers/bridge_helper.rb b/app/helpers/bridge_helper.rb
+index ffebe64..e52be12 100644
+--- a/app/helpers/bridge_helper.rb
++++ b/app/helpers/bridge_helper.rb
+@@ -22,11 +22,12 @@ module BridgeHelper
+   end
+ 
+   def bridge_share_card_description(card)
+-    date_added = card.created_at.strftime("%b %e")
+-    date_updated = card.last_active_at.strftime("%b %e")
+-    author = card.creator.familiar_name
+-    assignees = card.assignees.any? ? "assigned to #{card.assignees.map { |assignee| h assignee.familiar_name }.to_sentence}" : "not assigned"
+-    "Added #{date_added} by #{author} and #{assignees}. Updated #{date_updated}"
++    {
++      created_at: card.created_at.utc.iso8601(6),
++      last_active_at: card.last_active_at.utc.iso8601(6),
++      author: card.creator.familiar_name,
++      assignees: card.assignees.any? ? "assigned to #{card.assignees.map(&:familiar_name).to_sentence}" : "not assigned"
++    }.to_json
+   end
+ 
+   def bridge_share_board_description(board)
+diff --git a/app/helpers/entropy_helper.rb b/app/helpers/entropy_helper.rb
+index 7257ba4..53be2da 100644
+--- a/app/helpers/entropy_helper.rb
++++ b/app/helpers/entropy_helper.rb
+@@ -2,7 +2,7 @@ module EntropyHelper
+   def entropy_bubble_options_for(card)
+     {
+       daysBeforeReminder: card.entropy.days_before_reminder,
+-      closesAt: card.entropy.auto_clean_at.iso8601,
++      closesAt: card.entropy.auto_clean_at.utc.iso8601,
+       action: "Closes"
+     }
+   end
+@@ -11,8 +11,8 @@ module EntropyHelper
+     if card.last_activity_spike_at
+       {
+         stalledAfterDays: card.entropy.days_before_reminder,
+-        lastActivitySpikeAt: card.last_activity_spike_at.iso8601,
+-        updatedAt: card.updated_at.iso8601,
++        lastActivitySpikeAt: card.last_activity_spike_at.utc.iso8601,
++        updatedAt: card.updated_at.utc.iso8601,
+         action: "Stalled"
+       }
+     end
+diff --git a/app/helpers/time_helper.rb b/app/helpers/time_helper.rb
+index 90020f0..ec69f96 100644
+--- a/app/helpers/time_helper.rb
++++ b/app/helpers/time_helper.rb
+@@ -1,2 +1,7 @@
+ module TimeHelper
++  def local_time_tag(timestamp, format:, **attributes)
++    tag.time "", datetime: timestamp.utc.iso8601(6),
++      data: { controller: "local-time", local_time_format_value: format },
++      **attributes
++  end
+ end
+diff --git a/app/javascript/controllers/bridge/share_controller.js b/app/javascript/controllers/bridge/share_controller.js
+index 75f0241..2160de8 100644
+--- a/app/javascript/controllers/bridge/share_controller.js
++++ b/app/javascript/controllers/bridge/share_controller.js
+@@ -1,14 +1,33 @@
+ import { BridgeComponent } from "@hotwired/hotwire-native-bridge"
++import { formatLocalDateTime } from "helpers/time_helpers"
+ 
+ export default class extends BridgeComponent {
+   static component = "share"
+ 
+   shareUrl() {
+-    const description = this.bridgeElement.bridgeAttribute("share-description")
+     this.send("shareUrl", {
+       title: document.title,
+       url: window.location.href,
+-      description: description
++      description: this.#shareDescription()
+     })
+   }
++
++  #shareDescription() {
++    const description = this.bridgeElement.bridgeAttribute("share-description")
++
++    try {
++      const card = JSON.parse(description)
++
++      if (card.created_at && card.last_active_at) {
++        const dateAdded = formatLocalDateTime(card.created_at, "short-date")
++        const dateUpdated = formatLocalDateTime(card.last_active_at, "short-date")
++
++        return `Added ${dateAdded} by ${card.author} and ${card.assignees}. Updated ${dateUpdated}`
++      }
++    } catch {
++      return description
++    }
++
++    return description
++  }
+ }
+diff --git a/app/javascript/controllers/bridge/stamp_controller.js b/app/javascript/controllers/bridge/stamp_controller.js
+index 747f5d4..3af8390 100644
+--- a/app/javascript/controllers/bridge/stamp_controller.js
++++ b/app/javascript/controllers/bridge/stamp_controller.js
+@@ -24,7 +24,7 @@ export default class extends BridgeComponent {
+ 
+     this.send("connect", {
+       title: bridgeElement.title,
+-      description: bridgeElement.bridgeAttribute("description")
++      description: this.element.querySelector("time")?.textContent || bridgeElement.bridgeAttribute("description")
+     })
+   }
+ 
+@@ -38,7 +38,9 @@ export default class extends BridgeComponent {
+     })
+ 
+     this.stampObserver.observe(this.element, {
+-      attributes: true
++      attributes: true,
++      childList: true,
++      subtree: true
+     })
+   }
+ }
+diff --git a/app/javascript/controllers/local_time_controller.js b/app/javascript/controllers/local_time_controller.js
+new file mode 100644
+index 0000000..29cc783
+--- /dev/null
++++ b/app/javascript/controllers/local_time_controller.js
+@@ -0,0 +1,24 @@
++import { Controller } from "@hotwired/stimulus"
++import { formatLocalDateTime } from "helpers/time_helpers"
++
++export default class extends Controller {
++  static values = { format: String }
++
++  connect() {
++    this.render()
++
++    this.datetimeObserver = new MutationObserver(() => this.render())
++    this.datetimeObserver.observe(this.element, {
++      attributes: true,
++      attributeFilter: [ "datetime", "data-local-time-format-value" ]
++    })
++  }
++
++  disconnect() {
++    this.datetimeObserver.disconnect()
++  }
++
++  render() {
++    this.element.textContent = formatLocalDateTime(this.element.dateTime, this.formatValue)
++  }
++}
+diff --git a/app/javascript/helpers/date_helpers.js b/app/javascript/helpers/date_helpers.js
+index b0c4ffb..74a5570 100644
+--- a/app/javascript/helpers/date_helpers.js
++++ b/app/javascript/helpers/date_helpers.js
+@@ -1,44 +1,7 @@
+-import { getMetaContent } from "helpers/meta_helpers"
+-
+ export function signedDifferenceInDays(fromDate, toDate) {
+   return Math.round((beginningOfDay(toDate) - beginningOfDay(fromDate)) / (1000 * 60 * 60 * 24))
+ }
+ 
+ export function beginningOfDay(date) {
+-  const { year, month, day } = datePartsInTimezone(date)
+-  return new Date(Date.UTC(year, month - 1, day))
+-}
+-
+-// Snap a timestamp to midnight using the timezone the server rendered with (the
+-// `timezone` meta tag), so client day boundaries match the server's instead of
+-// following the browser's resolved timezone, which can differ in a PWA.
+-function datePartsInTimezone(date) {
+-  return dateFormatter().formatToParts(date).reduce((parts, { type, value }) => {
+-    if (type !== "literal") parts[type] = parseInt(value, 10)
+-    return parts
+-  }, {})
+-}
+-
+-let dateFormatterCache
+-let dateFormatterTimezone
+-
+-function dateFormatter() {
+-  const timezone = getMetaContent("timezone")
+-
+-  if (!dateFormatterCache || dateFormatterTimezone !== timezone) {
+-    dateFormatterTimezone = timezone
+-    dateFormatterCache = buildDateFormatter(timezone)
+-  }
+-
+-  return dateFormatterCache
+-}
+-
+-function buildDateFormatter(timezone) {
+-  const options = { year: "numeric", month: "2-digit", day: "2-digit" }
+-
+-  try {
+-    return new Intl.DateTimeFormat("en-US", { ...options, timeZone: timezone })
+-  } catch {
+-    return new Intl.DateTimeFormat("en-US", options)
+-  }
++  return new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
+ }
+diff --git a/app/javascript/helpers/meta_helpers.js b/app/javascript/helpers/meta_helpers.js
+deleted file mode 100644
+index a53f731..0000000
+--- a/app/javascript/helpers/meta_helpers.js
++++ /dev/null
+@@ -1,3 +0,0 @@
+-export function getMetaContent(name) {
+-  return document.querySelector(`meta[name="${name}"]`)?.getAttribute("content")
+-}
+diff --git a/app/javascript/helpers/time_helpers.js b/app/javascript/helpers/time_helpers.js
+new file mode 100644
+index 0000000..2610e56
+--- /dev/null
++++ b/app/javascript/helpers/time_helpers.js
+@@ -0,0 +1,141 @@
++import { signedDifferenceInDays } from "helpers/date_helpers"
++
++const DAY_IN_SECONDS = 24 * 60 * 60
++const SECONDS_PER_UNIT = {
++  second: 1,
++  minute: 60,
++  hour: 60 * 60,
++  day: DAY_IN_SECONDS,
++  week: 7 * DAY_IN_SECONDS,
++  month: 30 * DAY_IN_SECONDS,
++  year: 365 * DAY_IN_SECONDS
++}
++const relativeTimeFormatters = new Map()
++const dateTimeFormatters = new Map()
++
++export function formatLocalDateTime(value, format) {
++  const date = parseLocalDateTime(value)
++
++  if (!Number.isFinite(date.getTime())) return ""
++
++  switch (format) {
++    case "time":
++      return dateFormatter({ hour: "numeric", minute: "2-digit" }).format(date)
++    case "comment":
++      return formatCommentDate(date)
++    case "relative":
++      return formatRelativeTime(date)
++    case "until":
++      return formatUntilDate(date)
++    case "date":
++      return dateFormatter({ month: "short", day: "2-digit", year: "numeric" }).format(date)
++    case "short-date":
++      return dateFormatter({ month: "short", day: "numeric" }).format(date)
++    case "weekday-date":
++      return dateFormatter({ weekday: "long", month: "long", day: "numeric" }).format(date)
++    case "datetime":
++      return dateFormatter({
++        month: "numeric",
++        day: "numeric",
++        year: "2-digit",
++        hour: "numeric",
++        minute: "2-digit"
++      }).format(date)
++    default:
++      return ""
++  }
++}
++
++function formatCommentDate(date) {
++  const daysAgo = signedDifferenceInDays(date, new Date())
++
++  if (daysAgo === 0) {
++    return dateFormatter({ hour: "numeric", minute: "2-digit" }).format(date)
++  } else if (daysAgo === 1) {
++    return "yesterday"
++  } else if (daysAgo > 1 && daysAgo < 7) {
++    return relativeTimeFormatter("always").format(-daysAgo, "day")
++  } else {
++    return dateFormatter({ month: "short", day: "numeric" }).format(date)
++  }
++}
++
++function formatRelativeTime(date) {
++  const differenceInSeconds = (date.getTime() - Date.now()) / 1000
++  const absoluteDifferenceInSeconds = Math.abs(differenceInSeconds)
++  let unit
++
++  if (absoluteDifferenceInSeconds < 60) {
++    unit = "second"
++  } else if (absoluteDifferenceInSeconds < 60 * 60) {
++    unit = "minute"
++  } else if (absoluteDifferenceInSeconds < DAY_IN_SECONDS) {
++    unit = "hour"
++  } else if (absoluteDifferenceInSeconds < 7 * DAY_IN_SECONDS) {
++    unit = "day"
++  } else if (absoluteDifferenceInSeconds < 30 * DAY_IN_SECONDS) {
++    unit = "week"
++  } else if (absoluteDifferenceInSeconds < 365 * DAY_IN_SECONDS) {
++    unit = "month"
++  } else {
++    unit = "year"
++  }
++
++  const value = Math.round(differenceInSeconds / SECONDS_PER_UNIT[unit])
++
++  if (value === 0) {
++    return "just now"
++  } else {
++    return relativeTimeFormatter("always").format(value, unit)
++  }
++}
++
++function formatUntilDate(date) {
++  const daysUntil = signedDifferenceInDays(new Date(), date)
++
++  if (daysUntil === 0) {
++    return "today"
++  } else if (daysUntil === 1) {
++    return "tomorrow"
++  } else {
++    return relativeTimeFormatter("always").format(daysUntil, "day")
++  }
++}
++
++function parseLocalDateTime(value) {
++  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
++
++  if (dateOnly) {
++    return new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]))
++  } else {
++    return new Date(value)
++  }
++}
++
++function dateFormatter(options) {
++  const locale = document.documentElement.lang || undefined
++  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
++  const cacheKey = `${locale}:${timezone}:${JSON.stringify(options)}`
++
++  if (!dateTimeFormatters.has(cacheKey)) {
++    dateTimeFormatters.set(cacheKey, new Intl.DateTimeFormat(locale, { ...options, timeZone: timezone }))
++  }
++
++  return dateTimeFormatters.get(cacheKey)
++}
++
++function relativeTimeFormatter(numeric) {
++  const locale = document.documentElement.lang || undefined
++
++  if (!relativeTimeFormatters.has(locale)) {
++    relativeTimeFormatters.set(locale, new Map())
++  }
++
++  const formattersForLocale = relativeTimeFormatters.get(locale)
++
++  if (!formattersForLocale.has(numeric)) {
++    formattersForLocale.set(numeric, new Intl.RelativeTimeFormat(locale, { numeric }))
++  }
++
++  return formattersForLocale.get(numeric)
++}
+diff --git a/app/models/user/day_timeline/column.rb b/app/models/user/day_timeline/column.rb
+index f44f014..41d6acc 100644
+--- a/app/models/user/day_timeline/column.rb
++++ b/app/models/user/day_timeline/column.rb
+@@ -12,7 +12,7 @@ class User::DayTimeline::Column
+   end
+ 
+   def title
+-    date_tag = tag.span day_timeline.day.strftime("%A, %B %-d")
++    date_tag = local_time_tag day_timeline.day, format: "weekday-date"
+     parts = [ base_title, date_tag ]
+     parts << tag.span("(#{full_events_count})", class: "font-weight-normal") if full_events_count > 0
+     safe_join(parts, " ")
+diff --git a/app/views/cards/comments/_comment.html.erb b/app/views/cards/comments/_comment.html.erb
+index cf8495b..7bbce75 100644
+--- a/app/views/cards/comments/_comment.html.erb
++++ b/app/views/cards/comments/_comment.html.erb
+@@ -15,8 +15,7 @@
+             </strong>
+ 
+             <%= link_to comment, class: "comment__permalink-title", data: { turbo_frame: "_top" } do %>
+-              <%= comment.created_at.strftime("%A, %B %-d") %>,
+-              <%= comment.created_at.strftime("%l:%M %p").strip %>
++              <%= local_time_tag comment.created_at, format: "comment" %>
+             <% end %>
+           </h3>
+ 
+diff --git a/app/views/cards/container/_closure.html.erb b/app/views/cards/container/_closure.html.erb
+index 188bf9d..4c10b37 100644
+--- a/app/views/cards/container/_closure.html.erb
++++ b/app/views/cards/container/_closure.html.erb
+@@ -1,7 +1,7 @@
+ <div class="display-contents" id="<%= dom_id(card, :card_closure_toggle) %>">
+   <% if card.closed? %>
+     <div class="card-perma__closure-message flex gap-half justify-center">
+-      <span>Completed by <%= card.closed_by.name %> on <%= card.closed_at.strftime("%b %-d") %>.</span>
++      <span>Completed by <%= card.closed_by.name %> on <%= local_time_tag card.closed_at, format: "short-date" %>.</span>
+       <%= button_to card_closure_path(card), method: :delete, class: "btn btn--plain borderless fill-transparent" do %>
+         <span class="pad-inline-end">Undo</span>
+       <% end %>
+@@ -13,7 +13,7 @@
+     </div>
+     <% if card.entropic? && card.open? && !card.postponed? %>
+       <div class="card-perma__closure-message" id="<%= dom_id(card, :closure_notice) %>">
+-        Moves to “Not Now” in <%= time_ago_in_words(card.entropy.auto_clean_at) -%> if there’s no activity.
++        Moves to “Not Now” <%= local_time_tag card.entropy.auto_clean_at, format: "until" %> if there’s no activity.
+       </div>
+     <% end %>
+   <% end %>
+diff --git a/app/views/cards/display/common/_meta.html.erb b/app/views/cards/display/common/_meta.html.erb
+index 603eb49..febed75 100644
+--- a/app/views/cards/display/common/_meta.html.erb
++++ b/app/views/cards/display/common/_meta.html.erb
+@@ -4,7 +4,7 @@
+   </div>
+ 
+   <span class="card__meta-text card__meta-text--added">
+-    <%= card_drafted_or_added(card) %> <%= time_ago_in_words(card.created_at) %> ago
++    <%= card_drafted_or_added(card) %> <%= local_time_tag card.created_at, format: "relative" %>
+   </span>
+ 
+   <span class="card__meta-text card__meta-text--author">
+@@ -14,7 +14,7 @@
+   <span class="card__meta-text card__meta-text--updated overflow-ellipsis">
+     <%= icon_tag "refresh--meta" %>
+     Updated
+-    <%= time_ago_in_words(card.last_active_at) %> ago
++    <%= local_time_tag card.last_active_at, format: "relative" %>
+   </span>
+ 
+   <span class="card__meta-text card__meta-text--assignees overflow-ellipsis">
+diff --git a/app/views/cards/display/common/_stamp.html.erb b/app/views/cards/display/common/_stamp.html.erb
+index 86190e0..3b264c3 100644
+--- a/app/views/cards/display/common/_stamp.html.erb
++++ b/app/views/cards/display/common/_stamp.html.erb
+@@ -3,10 +3,9 @@
+     controller: "bridge--stamp",
+     bridge__stamp_scope_selector_value: ".card-perma",
+     bridge_title: "Not Now",
+-    bridge_description: card.postponed_at.strftime("%b %d, %Y")
+   } do %>
+     <span class="card__closed-title" data-text="Not Now">Not Now</span>
+-    <strong class="card__closed-date"><%= card.postponed_at.strftime("%b %d, %Y") %></strong>
++    <strong class="card__closed-date"><%= local_time_tag card.postponed_at, format: "date" %></strong>
+     <span class="card__closed-by-line">by <span class="card__closed-by"><%= card.postponed_by&.familiar_name %></span></span>
+   <% end %>
+ <% end %>
+@@ -16,10 +15,9 @@
+     controller: "bridge--stamp",
+     bridge__stamp_scope_selector_value: ".card-perma",
+     bridge_title: "Done",
+-    bridge_description: card.closed_at.strftime("%b %d, %Y")
+   } do %>
+     <span class="card__closed-title" data-text="Done">Done</span>
+-    <strong class="card__closed-date"><%= card.closed_at.strftime("%b %d, %Y") %></strong>
++    <strong class="card__closed-date"><%= local_time_tag card.closed_at, format: "date" %></strong>
+     <span class="card__closed-by-line">by <span class="card__closed-by"><%= card.closed_by.familiar_name %></span></span>
+   <% end %>
+ <% end %>
+diff --git a/app/views/cards/display/preview/_meta.html.erb b/app/views/cards/display/preview/_meta.html.erb
+index 50f8f2c..8c1e709 100644
+--- a/app/views/cards/display/preview/_meta.html.erb
++++ b/app/views/cards/display/preview/_meta.html.erb
+@@ -4,7 +4,7 @@
+   </div>
+ 
+   <span class="card__meta-text card__meta-text--added">
+-    <%= card_drafted_or_added(card) %> <%= time_ago_in_words(card.created_at) %> ago
++    <%= card_drafted_or_added(card) %> <%= local_time_tag card.created_at, format: "relative" %>
+   </span>
+ 
+   <span class="card__meta-text card__meta-text--author">
+@@ -13,7 +13,7 @@
+ 
+   <span class="card__meta-text card__meta-text--updated overflow-ellipsis">
+     <%= icon_tag "refresh--meta", aria: { label: "Last updated" } %>
+-    <%= time_ago_in_words(card.last_active_at) %> ago
++    <%= local_time_tag card.last_active_at, format: "relative" %>
+   </span>
+ 
+   <span class="card__meta-text card__meta-text--assignees overflow-ellipsis">
+diff --git a/app/views/cards/display/public_preview/_meta.html.erb b/app/views/cards/display/public_preview/_meta.html.erb
+index dbb01d3..ed8d3ee 100644
+--- a/app/views/cards/display/public_preview/_meta.html.erb
++++ b/app/views/cards/display/public_preview/_meta.html.erb
+@@ -4,7 +4,7 @@
+   </div>
+ 
+   <span class="card__meta-text card__meta-text--added">
+-    <%= card_drafted_or_added(card) %> <%= time_ago_in_words(card.created_at) %> ago
++    <%= card_drafted_or_added(card) %> <%= local_time_tag card.created_at, format: "relative" %>
+   </span>
+ 
+   <span class="card__meta-text card__meta-text--author">
+@@ -13,7 +13,7 @@
+ 
+   <span class="card__meta-text card__meta-text--updated overflow-ellipsis">
+     Updated
+-    <%= time_ago_in_words(card.last_active_at) %> ago
++    <%= local_time_tag card.last_active_at, format: "relative" %>
+   </span>
+ 
+   <span class="card__meta-text card__meta-text--assignees overflow-ellipsis">
+diff --git a/app/views/events/_empty_days.html.erb b/app/views/events/_empty_days.html.erb
+index 11d3ee1..6ec0994 100644
+--- a/app/views/events/_empty_days.html.erb
++++ b/app/views/events/_empty_days.html.erb
+@@ -3,12 +3,12 @@
+ <% if earliest.present? %>
+   <% if earliest == latest %>
+     <div class="events__none">
+-      <h2 class="txt-medium margin-none"><span class="txt-ink txt-capitalize"><%= earliest.strftime("%A, %B %-d") %></span></h2>
++      <h2 class="txt-medium margin-none"><%= local_time_tag earliest, format: "weekday-date", class: "txt-ink txt-capitalize" %></h2>
+       <p class="margin-none">No activity</p>
+     </div>
+   <% elsif earliest < latest %>
+     <div class="events__none">
+-      <h2 class="txt-medium margin-none"><span class="txt-ink txt-capitalize"><%= earliest.strftime("%A, %B %-d") %></span> – <span class="txt-ink txt-capitalize"><%= latest.strftime("%A, %B %-d") %></span></h2>
++      <h2 class="txt-medium margin-none"><%= local_time_tag earliest, format: "weekday-date", class: "txt-ink txt-capitalize" %> – <%= local_time_tag latest, format: "weekday-date", class: "txt-ink txt-capitalize" %></h2>
+       <p class="margin-none">No activity for <%= (latest - earliest).seconds.in_days.round + 1 %> days</p>
+     </div>
+   <% end %>
+diff --git a/app/views/events/day_timeline/_column.html.erb b/app/views/events/day_timeline/_column.html.erb
+index 1ec1647..cfd69d0 100644
+--- a/app/views/events/day_timeline/_column.html.erb
++++ b/app/views/events/day_timeline/_column.html.erb
+@@ -12,7 +12,7 @@
+   <% column.events_by_hour.each do |hour, events| %>
+     <%= events_at_hour_container(column, hour) do %>
+       <%= render partial: "events/event", collection: events, cached: true %>
+-      <span class="event__timestamp txt-small translucent"><%= events.first.created_at.strftime("%l:%M %p").strip %></span>
++      <%= local_time_tag events.first.created_at, format: "time", class: "event__timestamp txt-small translucent" %>
+     <% end %>
+   <% end %>
+ 
+diff --git a/app/views/layouts/shared/_head.html.erb b/app/views/layouts/shared/_head.html.erb
+index bddd34b..9ef153d 100644
+--- a/app/views/layouts/shared/_head.html.erb
++++ b/app/views/layouts/shared/_head.html.erb
+@@ -11,7 +11,6 @@
+   <%= csrf_meta_tags %>
+   <%= csp_meta_tag %>
+   <%= tag.meta name: "current-user-id", content: Current.user.id if Current.user %>
+-  <%= tag.meta name: "timezone", content: Time.zone.name %>
+   <%= tag.meta name: "vapid-public-key", content: Rails.configuration.x.vapid.public_key %>
+ 
+   <% turbo_refreshes_with method: :morph, scroll: :preserve %>
+diff --git a/app/views/my/access_tokens/_access_token.html.erb b/app/views/my/access_tokens/_access_token.html.erb
+index d097cc0..a43db71 100644
+--- a/app/views/my/access_tokens/_access_token.html.erb
++++ b/app/views/my/access_tokens/_access_token.html.erb
+@@ -1,7 +1,7 @@
+ <tr style="view-transition-name: <%= dom_id(access_token) %>">
+   <td><strong><%= access_token.description %></strong></td>
+   <td><%= access_token.permission.humanize %></td>
+-  <td><%= access_token.created_at.strftime("%-m/%-d/%y, %l:%M %p").strip %></td>
++  <td><%= local_time_tag access_token.created_at, format: "datetime" %></td>
+   <td>
+     <%= button_to my_access_token_path(access_token), method: :delete,
+           class: "btn txt-negative btn--circle txt-x-small borderless fill-transparent",
+diff --git a/app/views/notifications/notification/_header.html.erb b/app/views/notifications/notification/_header.html.erb
+index e78ecac..82d17b7 100644
+--- a/app/views/notifications/notification/_header.html.erb
++++ b/app/views/notifications/notification/_header.html.erb
+@@ -14,7 +14,7 @@
+   </div>
+ 
+   <div class="card__notification-meta overflow-ellipsis flex-item-no-shrink">
+-    <span class="card__timestamp"><%= notification.created_at.strftime("%b %-d") %></span>
++    <%= local_time_tag notification.created_at, format: "short-date", class: "card__timestamp" %>
+   </div>
+ 
+   <div class="card__notification-meta flex-item-no-shrink">
+diff --git a/app/views/searches/_result.html.erb b/app/views/searches/_result.html.erb
+index 5132cd0..4182427 100644
+--- a/app/views/searches/_result.html.erb
++++ b/app/views/searches/_result.html.erb
+@@ -15,7 +15,7 @@
+       <% end %>
+     </div>
+     <div class="overflow-ellipsis translucent txt-ink">
+-      <%= result.card.board.name %> · <%= result.created_at.strftime("%b %-d") %>
++      <%= result.card.board.name %> · <%= local_time_tag result.created_at, format: "short-date" %>
+     </div>
+   <% end %>
+ </li>
+diff --git a/app/views/webhooks/_delivery.html.erb b/app/views/webhooks/_delivery.html.erb
+index 8dba2f4..5ea29df 100644
+--- a/app/views/webhooks/_delivery.html.erb
++++ b/app/views/webhooks/_delivery.html.erb
+@@ -3,6 +3,6 @@
+     <%= delivery.state %>
+   </strong>
+   <div class="txt-subtle">
+-    <%= time_tag delivery.created_at, time_ago_in_words(delivery.created_at) %>
++    <%= local_time_tag delivery.created_at, format: "relative" %>
+   </div>
+ <% end %>
+diff --git a/saas/app/views/admin/stats/show.html.erb b/saas/app/views/admin/stats/show.html.erb
+index c2b1e1d..7ead7b5 100644
+--- a/saas/app/views/admin/stats/show.html.erb
++++ b/saas/app/views/admin/stats/show.html.erb
+@@ -85,7 +85,7 @@
+           </div>
+ 
+           <div class="txt-medium txt-ink-medium" style="text-align: right">
+-            <%= time_ago_in_words(account.created_at) %> ago
++            <%= local_time_tag account.created_at, format: "relative" %>
+           </div>
+         </li>
+       <% end %>
+diff --git a/saas/app/views/my/devices/index.html.erb b/saas/app/views/my/devices/index.html.erb
+index 3842e31..e5185f6 100644
+--- a/saas/app/views/my/devices/index.html.erb
++++ b/saas/app/views/my/devices/index.html.erb
+@@ -14,7 +14,7 @@
+               (<%= device.platform == "apple" ? "iOS" : "Android" %>)
+             </span>
+             <span class="txt-subtle txt-x-small">
+-              Added <%= time_ago_in_words(device.created_at) %> ago
++              Added <%= local_time_tag device.created_at, format: "relative" %>
+             </span>
+           </div>
+           <%= button_to saas.my_device_path(device), method: :delete, class: "btn btn--circle-mobile txt-small", data: { confirm: "Remove this device?" }, form: { class: "flex-item-no-shrink" } do %>
+diff --git a/test/controllers/cards/comments_controller_test.rb b/test/controllers/cards/comments_controller_test.rb
+index 3e311ae..bf5b899 100644
+--- a/test/controllers/cards/comments_controller_test.rb
++++ b/test/controllers/cards/comments_controller_test.rb
+@@ -5,6 +5,24 @@ class Cards::CommentsControllerTest < ActionDispatch::IntegrationTest
+     sign_in_as :kevin
+   end
+ 
++  test "comment timestamps are emitted as raw UTC timestamps for the browser" do
++    comment = comments(:logo_agreement_kevin)
++    timestamps = %w[ Pacific/Honolulu Asia/Tokyo ].map do |timezone|
++      cookies[:timezone] = timezone
++      get card_path(comment.card)
++
++      assert_response :success
++      assert_select "meta[name='timezone']", count: 0
++      selector = "#comment_#{comment.id} time[data-controller='local-time'][data-local-time-format-value='comment']"
++      assert_select selector, count: 1
++      timestamp = css_select(selector).first
++      assert_empty timestamp.text
++      timestamp["datetime"]
++    end
++
++    assert_equal [ comment.created_at.utc.iso8601(6) ] * 2, timestamps
++  end
++
+   test "create" do
+     assert_difference -> { cards(:logo).comments.count }, +1 do
+       post card_comments_path(cards(:logo)), params: { comment: { body: "Agreed." } }, as: :turbo_stream
+diff --git a/test/system/local_time_test.rb b/test/system/local_time_test.rb
+new file mode 100644
+index 0000000..166999e
+--- /dev/null
++++ b/test/system/local_time_test.rb
+@@ -0,0 +1,75 @@
++require "application_system_test_case"
++
++class LocalTimeTest < ApplicationSystemTestCase
++  include ActionView::RecordIdentifier
++  test "comment timestamps are emitted as raw UTC timestamps" do
++    page.driver.browser.execute_cdp("Emulation.setTimezoneOverride", timezoneId: "America/Los_Angeles")
++    sign_in_as(users(:kevin))
++    page.driver.browser.manage.delete_cookie("timezone")
++    visit card_url(cards(:logo))
++
++    comment = comments(:logo_agreement_kevin)
++    timestamp = find("#comment_#{comment.id} time")
++
++    assert_equal comment.created_at.utc.iso8601(6), timestamp["datetime"]
++    expected_local_time = comment.created_at.in_time_zone("America/Los_Angeles").strftime("%-l:%M %p")
++    assert_equal expected_local_time, timestamp.text
++  end
++
++  test "formats comments and auto-close dates in the browser timezone" do
++    page.driver.browser.execute_cdp("Emulation.setTimezoneOverride", timezoneId: "America/Los_Angeles")
++    sign_in_as(users(:kevin))
++    visit card_url(cards(:logo))
++
++    page.driver.browser.execute_script(<<~JAVASCRIPT)
++      const NativeDate = Date
++      const fixedNow = NativeDate.parse("2025-09-17T02:00:00Z")
++
++      class FixedDate extends NativeDate {
++        constructor(...args) {
++          super(...args.length ? args : [ fixedNow ])
++        }
++
++        static now() {
++          return fixedNow
++        }
++      }
++
++      window.Date = FixedDate
++
++      const samples = {
++        today: [ "comment", "2025-09-16T20:42:00Z" ],
++        yesterday: [ "comment", "2025-09-16T06:42:00Z" ],
++        earlierThisWeek: [ "comment", "2025-09-11T20:42:00Z" ],
++        older: [ "comment", "2025-09-08T20:42:00Z" ],
++        tomorrow: [ "until", "2025-09-17T08:00:00Z" ],
++        inThreeDays: [ "until", "2025-09-19T08:00:00Z" ],
++        dateOnly: [ "weekday-date", "2025-09-12" ]
++      }
++
++      const container = document.createElement("div")
++      container.id = "local-time-test-fixtures"
++
++      for (const [ name, [ format, datetime ] ] of Object.entries(samples)) {
++        const time = document.createElement("time")
++        time.dataset.controller = "local-time"
++        time.dataset.localTimeFormatValue = format
++        time.dataset.testTime = name
++        time.dateTime = datetime
++        container.append(time)
++      }
++
++      document.body.append(container)
++    JAVASCRIPT
++
++    assert_selector 'time[data-test-time="today"]', text: "1:42 PM"
++    page.driver.browser.execute_script(%(document.querySelector('[data-test-time="today"]').dateTime = "2025-09-16T21:42:00Z"))
++    assert_selector 'time[data-test-time="today"]', text: "2:42 PM"
++    assert_selector 'time[data-test-time="yesterday"]', text: "yesterday"
++    assert_selector 'time[data-test-time="earlierThisWeek"]', text: "5 days ago"
++    assert_selector 'time[data-test-time="older"]', text: "Sep 8"
++    assert_selector 'time[data-test-time="tomorrow"]', text: "tomorrow"
++    assert_selector 'time[data-test-time="inThreeDays"]', text: "in 3 days"
++    assert_selector 'time[data-test-time="dateOnly"]', text: "Friday, September 12"
++  end
++end

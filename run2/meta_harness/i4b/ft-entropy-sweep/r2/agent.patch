@@ -1,0 +1,151 @@
+diff --git a/app/models/card/entropic.rb b/app/models/card/entropic.rb
+index ebaad78..bf87405 100644
+--- a/app/models/card/entropic.rb
++++ b/app/models/card/entropic.rb
+@@ -3,11 +3,7 @@ module Card::Entropic
+ 
+   included do
+     scope :due_to_be_postponed, -> do
+-      active
+-        .joins(board: :account)
+-        .left_outer_joins(board: :entropy)
+-        .joins("LEFT OUTER JOIN entropies AS account_entropies ON account_entropies.account_id = accounts.id AND account_entropies.container_type = 'Account' AND account_entropies.container_id = accounts.id")
+-        .where("last_active_at <= #{connection.date_subtract('?', 'COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period)')}", Time.now)
++      Card.due_to_be_postponed_relation(Card.due_to_be_postponed_queries(self, Time.current))
+     end
+ 
+     scope :postponing_soon, -> do
+@@ -25,10 +21,54 @@ module Card::Entropic
+ 
+   class_methods do
+     def auto_postpone_all_due
+-      due_to_be_postponed.find_each do |card|
+-        card.auto_postpone(user: card.account.system_user)
++      now = Time.current
++      queries = due_to_be_postponed_queries(all, now)
++      system_users = User.where(role: :system).index_by(&:account_id)
++
++      queries.each do |cards|
++        cards.preload(:account, :not_now, :activity_spike, board: :account).find_each do |card|
++          system_user = system_users[card.account_id] ||= card.account.system_user
++          card.auto_postpone(user: system_user)
++        end
++      end
++
++      due_to_be_postponed_relation(queries)
++    end
++
++    def due_to_be_postponed_relation(queries)
++      if queries.any?
++        from("(#{queries.map(&:to_sql).join(" UNION ALL ")}) AS cards")
++      else
++        none
+       end
+     end
++
++    def due_to_be_postponed_queries(scope, now)
++      board_settings = Entropy.where(container_type: "Board")
++      account_settings = Entropy.where(container_type: "Account").where("entropies.account_id = entropies.container_id")
++
++      queries = board_settings.distinct.pluck(:auto_postpone_period).map do |period|
++        boards_with_period = Board.where(id: board_settings.where(auto_postpone_period: period).select(:container_id))
++
++        scope.active
++          .where(account_id: boards_with_period.select(:account_id))
++          .where(board_id: boards_with_period.select(:id))
++          .where("cards.last_active_at <= ?", now - period.seconds)
++      end
++
++      account_settings.distinct.pluck(:auto_postpone_period).each do |period|
++        accounts_with_period = account_settings.where(auto_postpone_period: period).select(:container_id)
++        boards_for_accounts = Board.where(account_id: accounts_with_period)
++
++        queries << scope.active
++          .where(account_id: accounts_with_period)
++          .where(board_id: boards_for_accounts.select(:id))
++          .where.not(board_id: board_settings.select(:container_id))
++          .where("cards.last_active_at <= ?", now - period.seconds)
++      end
++
++      queries
++    end
+   end
+ 
+   def entropy
+diff --git a/test/models/card/entropic_test.rb b/test/models/card/entropic_test.rb
+index 848cfa7..7a062fd 100644
+--- a/test/models/card/entropic_test.rb
++++ b/test/models/card/entropic_test.rb
+@@ -85,4 +85,72 @@ class Card::EntropicTest < ActiveSupport::TestCase
+ 
+     assert_equal(cards(:logo, :radio).to_set, Card.postponing_soon.to_set)
+   end
++
++  test "auto_postpone_all_due returns a relation" do
++    assert_kind_of ActiveRecord::Relation, Card.auto_postpone_all_due
++  end
++
++  test "due_to_be_postponed remains a relation" do
++    assert_kind_of ActiveRecord::Relation, Card.due_to_be_postponed
++  end
++
++  test "due_to_be_postponed excludes closed, drafted, and postponed cards" do
++    freeze_time
++
++    cutoff = Time.current - entropies(:writebook_board).auto_postpone_period
++    cards(:logo).update!(last_active_at: cutoff - 1.second)
++    cards(:shipping).update!(last_active_at: cutoff - 1.second)
++    cards(:buy_domain).update!(status: :drafted, last_active_at: cutoff - 1.second)
++    cards(:text).update!(last_active_at: cutoff - 1.second)
++    cards(:text).postpone(user: accounts("37s").system_user)
++
++    due_cards = Card.due_to_be_postponed
++
++    assert_includes due_cards, cards(:logo)
++    assert_not_includes due_cards, cards(:shipping)
++    assert_not_includes due_cards, cards(:buy_domain)
++    assert_not_includes due_cards, cards(:text)
++  end
++
++  test "due_to_be_postponed works across batches" do
++    freeze_time
++
++    cutoff = Time.current - entropies(:writebook_board).auto_postpone_period
++    cards(:logo).update!(last_active_at: cutoff - 1.second)
++    cards(:layout).update!(last_active_at: cutoff - 2.seconds)
++
++    due_card_ids = Card.due_to_be_postponed.find_each(batch_size: 1).map(&:id)
++
++    assert_includes due_card_ids, cards(:logo).id
++    assert_includes due_card_ids, cards(:layout).id
++  end
++
++  test "due_to_be_postponed honors the board entropy cutoff boundary" do
++    freeze_time
++
++    cutoff = Time.current - entropies(:writebook_board).auto_postpone_period
++    cards(:logo).update!(last_active_at: cutoff - 1.second)
++    cards(:layout).update!(last_active_at: cutoff)
++    cards(:text).update!(last_active_at: cutoff + 1.second)
++
++    due_cards = Card.due_to_be_postponed
++    assert_includes due_cards, cards(:logo)
++    assert_includes due_cards, cards(:layout)
++    assert_not_includes due_cards, cards(:text)
++  end
++
++  test "due_to_be_postponed falls back to account entropy at the cutoff boundary" do
++    freeze_time
++    entropies(:writebook_board).destroy
++
++    cutoff = Time.current - entropies("37s_account").auto_postpone_period
++    cards(:logo).update!(last_active_at: cutoff - 1.second)
++    cards(:layout).update!(last_active_at: cutoff)
++    cards(:text).update!(last_active_at: cutoff + 1.second)
++
++    due_cards = Card.due_to_be_postponed
++    assert_includes due_cards, cards(:logo)
++    assert_includes due_cards, cards(:layout)
++    assert_not_includes due_cards, cards(:text)
++  end
+ end

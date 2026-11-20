@@ -1,0 +1,111 @@
+diff --git a/app/models/card/entropic.rb b/app/models/card/entropic.rb
+index ebaad78..0ab6a50 100644
+--- a/app/models/card/entropic.rb
++++ b/app/models/card/entropic.rb
+@@ -3,11 +3,17 @@ module Card::Entropic
+ 
+   included do
+     scope :due_to_be_postponed, -> do
++      now = Time.now
++      minimum_period = Entropy::AUTO_POSTPONE_PERIODS_IN_SECONDS.min
++
+       active
+         .joins(board: :account)
+         .left_outer_joins(board: :entropy)
+         .joins("LEFT OUTER JOIN entropies AS account_entropies ON account_entropies.account_id = accounts.id AND account_entropies.container_type = 'Account' AND account_entropies.container_id = accounts.id")
+-        .where("last_active_at <= #{connection.date_subtract('?', 'COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period)')}", Time.now)
++        .where("last_active_at <= #{connection.date_subtract('?', 'COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period)')}", now)
++        # Every configured period is at least the minimum, so this conservative
++        # cutoff keeps the sweep within a range of the last_active_at index.
++        .where("last_active_at <= #{connection.date_subtract('?', minimum_period.to_s)}", now)
+     end
+ 
+     scope :postponing_soon, -> do
+@@ -25,7 +31,8 @@ module Card::Entropic
+ 
+   class_methods do
+     def auto_postpone_all_due
+-      due_to_be_postponed.find_each do |card|
++      # Postponing advances last_active_at and removes each card from this scope.
++      due_to_be_postponed.find_each(cursor: [ :last_active_at, :id ], order: [ :asc, :asc ]) do |card|
+         card.auto_postpone(user: card.account.system_user)
+       end
+     end
+diff --git a/db/migrate/20260219120000_add_status_last_active_id_index_to_cards.rb b/db/migrate/20260219120000_add_status_last_active_id_index_to_cards.rb
+new file mode 100644
+index 0000000..fe01a05
+--- /dev/null
++++ b/db/migrate/20260219120000_add_status_last_active_id_index_to_cards.rb
+@@ -0,0 +1,5 @@
++class AddStatusLastActiveIdIndexToCards < ActiveRecord::Migration[8.2]
++  def change
++    add_index :cards, [ :status, :last_active_at, :id ], name: "index_cards_on_status_last_active_at_and_id"
++  end
++end
+diff --git a/db/schema.rb b/db/schema.rb
+index 99e6be9..5bcc275 100644
+--- a/db/schema.rb
++++ b/db/schema.rb
+@@ -10,7 +10,7 @@
+ #
+ # It's strongly recommended that you check this file into your version control system.
+ 
+-ActiveRecord::Schema[8.2].define(version: 2026_02_18_120000) do
++ActiveRecord::Schema[8.2].define(version: 2026_02_19_120000) do
+   create_table "accesses", id: :uuid, charset: "utf8mb4", collation: "utf8mb4_0900_ai_ci", force: :cascade do |t|
+     t.datetime "accessed_at"
+     t.uuid "account_id", null: false
+@@ -231,6 +231,7 @@ ActiveRecord::Schema[8.2].define(version: 2026_02_18_120000) do
+     t.index ["account_id", "number"], name: "index_cards_on_account_id_and_number", unique: true
+     t.index ["board_id"], name: "index_cards_on_board_id"
+     t.index ["column_id"], name: "index_cards_on_column_id"
++    t.index ["status", "last_active_at", "id"], name: "index_cards_on_status_last_active_at_and_id"
+   end
+ 
+   create_table "closers_filters", id: false, charset: "utf8mb4", collation: "utf8mb4_0900_ai_ci", force: :cascade do |t|
+diff --git a/db/schema_sqlite.rb b/db/schema_sqlite.rb
+index 00125d1..6708bf0 100644
+--- a/db/schema_sqlite.rb
++++ b/db/schema_sqlite.rb
+@@ -10,7 +10,7 @@
+ #
+ # It's strongly recommended that you check this file into your version control system.
+ 
+-ActiveRecord::Schema[8.2].define(version: 2026_02_18_120000) do
++ActiveRecord::Schema[8.2].define(version: 2026_02_19_120000) do
+   create_table "accesses", id: :uuid, force: :cascade do |t|
+     t.datetime "accessed_at"
+     t.uuid "account_id", null: false
+@@ -231,6 +231,7 @@ ActiveRecord::Schema[8.2].define(version: 2026_02_18_120000) do
+     t.index ["account_id", "number"], name: "index_cards_on_account_id_and_number", unique: true
+     t.index ["board_id"], name: "index_cards_on_board_id"
+     t.index ["column_id"], name: "index_cards_on_column_id"
++    t.index ["status", "last_active_at", "id"], name: "index_cards_on_status_last_active_at_and_id"
+   end
+ 
+   create_table "closers_filters", id: false, force: :cascade do |t|
+diff --git a/test/models/card/entropic_test.rb b/test/models/card/entropic_test.rb
+index 848cfa7..58ecab4 100644
+--- a/test/models/card/entropic_test.rb
++++ b/test/models/card/entropic_test.rb
+@@ -32,6 +32,20 @@ class Card::EntropicTest < ActiveSupport::TestCase
+     assert_equal original_period, account_entropy.reload.auto_postpone_period
+   end
+ 
++  test "due cards at the account entropy boundary remain eligible" do
++    freeze_time do
++      minimum_period = Entropy::AUTO_POSTPONE_PERIODS_IN_SECONDS.min
++      entropies(:writebook_board).destroy
++      entropies("37s_account").update! auto_postpone_period: minimum_period
++
++      cards(:logo).update! last_active_at: minimum_period.seconds.ago
++      cards(:shipping).update! last_active_at: minimum_period.seconds.ago + 1.second
++
++      assert_includes Card.due_to_be_postponed, cards(:logo)
++      assert_not_includes Card.due_to_be_postponed, cards(:shipping)
++    end
++  end
++
+   test "auto postpone all due using the default account entropy" do
+     entropies(:writebook_board).destroy
+ 

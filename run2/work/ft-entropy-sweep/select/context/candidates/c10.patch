@@ -1,0 +1,113 @@
+diff --git a/app/models/card/entropic.rb b/app/models/card/entropic.rb
+index ebaad78..32c5162 100644
+--- a/app/models/card/entropic.rb
++++ b/app/models/card/entropic.rb
+@@ -1,6 +1,9 @@
+ module Card::Entropic
+   extend ActiveSupport::Concern
+ 
++  # Leave room for other query binds under SQLite's 999-parameter limit.
++  BIND_BATCH_SIZE = 900
++
+   included do
+     scope :due_to_be_postponed, -> do
+       active
+@@ -25,10 +28,45 @@ module Card::Entropic
+ 
+   class_methods do
+     def auto_postpone_all_due
+-      due_to_be_postponed.find_each do |card|
+-        card.auto_postpone(user: card.account.system_user)
++      now = Time.current
++
++      # Grouping by period keeps the card query on an indexable timestamp cutoff.
++      Account.includes(:entropy).find_each(batch_size: BIND_BATCH_SIZE) do |account|
++        postpone_due_cards_for(account, now)
+       end
+     end
++
++    private
++      def postpone_due_cards_for(account, now)
++        system_user = nil
++        account_period = account.entropy&.auto_postpone_period
++
++        boards_by_period(account, account_period).each do |period, board_ids|
++          if period
++            board_ids.each_slice(BIND_BATCH_SIZE) do |board_id_batch|
++              due_cards_for(account, board_id_batch, period, now)
++                .find_each(cursor: [ :last_active_at, :id ], order: [ :asc, :asc ]) do |card|
++                  system_user ||= account.system_user
++                  card.auto_postpone(user: system_user)
++                end
++            end
++          end
++        end
++      end
++
++      def boards_by_period(account, account_period)
++        account.boards
++          .left_outer_joins(:entropy)
++          .pluck(:id, "entropies.auto_postpone_period")
++          .group_by { |_, board_period| board_period || account_period }
++          .transform_values { |boards| boards.map(&:first) }
++      end
++
++      def due_cards_for(account, board_ids, period, now)
++        Card.active
++          .where(account_id: account.id, board_id: board_ids)
++          .where(last_active_at: ..(now - period.seconds))
++      end
+   end
+ 
+   def entropy
+diff --git a/test/models/card/entropic_test.rb b/test/models/card/entropic_test.rb
+index 848cfa7..98ad0eb 100644
+--- a/test/models/card/entropic_test.rb
++++ b/test/models/card/entropic_test.rb
+@@ -59,6 +59,46 @@ class Card::EntropicTest < ActiveSupport::TestCase
+     assert_not cards(:shipping).reload.postponed?
+   end
+ 
++  test "auto postpone all due honors mixed board and account entropy periods" do
++    entropies(:private_board).destroy
++
++    cards(:logo).update!(last_active_at: 1.day.ago - entropies(:writebook_board).auto_postpone_period)
++    account_period_card = boards(:private).cards.create!(creator: users(:david), title: "Account entropy", status: :published)
++    account_period_card.update!(last_active_at: 1.day.ago - entropies("37s_account").auto_postpone_period)
++
++    Card.auto_postpone_all_due
++
++    assert cards(:logo).reload.postponed?
++    assert account_period_card.reload.postponed?
++  end
++
++  test "auto postpone all due skips boards without an entropy period" do
++    entropies(:writebook_board).destroy
++    entropies("37s_account").destroy
++    cards(:logo).update!(last_active_at: 1.year.ago)
++
++    Card.auto_postpone_all_due
++
++    assert_not cards(:logo).reload.postponed?
++  end
++
++  test "due card selection uses the account activity index on SQLite" do
++    skip "SQLite-specific query plan" unless ActiveRecord::Base.connection.adapter_name == "SQLite"
++
++    account = accounts("37s")
++    board = boards(:writebook)
++    relation = Card.send(:due_cards_for, account, [ board.id ], 90.days.to_i, Time.current)
++      .order(last_active_at: :asc, id: :asc)
++      .limit(1_000)
++
++    query_plan = ActiveRecord::Base.connection
++      .execute("EXPLAIN QUERY PLAN #{relation.to_sql}")
++      .map { |row| row["detail"] }
++
++    assert query_plan.any? { |detail| detail.include?("index_cards_on_account_id_and_last_active_at_and_status") }
++    assert_not query_plan.any? { |detail| detail == "SCAN cards" }
++  end
++
+   test "postponing soon scope" do
+     cards(:logo, :shipping).each(&:published!)
+ 

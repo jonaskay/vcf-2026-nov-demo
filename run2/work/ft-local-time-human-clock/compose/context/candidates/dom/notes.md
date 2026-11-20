@@ -1,0 +1,28 @@
+**Change:** I added one skill, `skills/time-display/SKILL.md`, and its trigger line near the top of `system.md`: "When the change touches how dates or times are displayed, formatted, cached or timezone-adjusted, run `cat /opt/harness/skills/time-display/SKILL.md` and follow it." No other file changed. I chose a skill rather than always-on text because the knowledge only matters for time-related changes, and any later Fizzy task that touches dates or timezones can reuse it.
+
+**Moments that motivated it:**
+
+1. **The runs disagreed on the SaaS views.** The request says "everywhere we show a date or time". Only r3 converted `saas/app/views/admin/stats/show.html.erb:88` and `saas/app/views/my/devices/index.html.erb:17`. r1 and r2 searched only `app/` and left `time_ago_in_words` there. The two locations come from r3 step 6 output (`git grep` without a path limit). The skill names both files and includes a coverage grep over `app saas/app`.
+
+2. **The runs disagreed on capitalisation.** `app/assets/stylesheets/comments.css:173-177` gives `.comment__permalink-title` the rule `text-transform: capitalize` (r2 step 38, `nl -ba` output). The comment link would show "Yesterday" and "5 Days Ago" where the request says "yesterday" and "5 days ago". Only r2 caught this (steps 53–59); r1 and r3 shipped the conflict. The skill turns this into a casing check. It also lists the other transforms that output shows: `cards.css:439-441` (`.card__closed-date` uppercase) and `cards.css:516-519` (`.card__notification-meta` uppercase), plus the `txt-capitalize` spans in `_empty_days.html.erb` (r3 step 6 output).
+
+3. **The runs disagreed on scope and public names.**
+   - r1 deleted `layouts/shared/_time_zone.html.erb` and rewrote `timezone_cookie_controller.js` to push the timezone with a JS PUT (steps 51–73). That feeds `User::Settings#timezone_name`, which `Notification::Bundle` uses at bundle.rb:40 (r2 step 36 output). It is server behaviour outside the request, so the skill says to keep it.
+   - r2 renamed the public helper `bridge_share_card_description` to `bridge_share_card_details` (step 30). r3 kept the name. The skill says to keep helper names and change only what they emit.
+
+4. **A risk that showed up in the runs but caused no failure: removing the global etag.** All three runs removed `etag { timezone_from_cookie }`. Whether that is safe for the day timeline depends on `app/models/user/day_timeline.rb:45`, whose cache key includes `Time.zone.name` (r2 step 36 output). r1 spent about 20 steps (55–72) probing ETags with debug writes. The skill states the fact so the next run does not need to probe.
+
+**Other workspace facts in the skill and their sources:**
+- **Call-site inventory:** r3 step 5 grep output.
+- **`time_helper.rb`:** it is an empty `module TimeHelper` that `User::DayTimeline::Column` already includes (column.rb:2). Source: r3 step 6 output.
+- **`current_timezone.rb:10` and its test:** r3 step 7 output.
+- **Meta tag → `date_helpers.js` → `bubble_controller.js`:** the head meta at `_head.html.erb:14` feeds `date_helpers.js`, which `bubble_controller.js` uses. Source: r3 steps 5–7 output.
+- **Fragment caches:** `cache comment` and `cache event`. Source: r3 step 6 and step 7 output.
+- **Importmap pins and controller eager-loading:** r3 steps 4–5 output.
+- **System-test setup:** `ApplicationSystemTestCase` and `sign_in_as` come from r3 step 7 output. The CDP timezone override is a run result: r1 step 39 and r2 step 79 ran system tests by explicit path and exited 0.
+- **Entropy helper test:** `test/helpers/entropy_helper_test.rb` asserts the `iso8601` strings. Source: r3 step 6 grep.
+
+**What the skill leaves alone:**
+- No procedure or time budgeting.
+- No format names or labels. Those come from the request.
+- No new always-on memory.

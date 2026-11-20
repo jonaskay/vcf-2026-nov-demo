@@ -86,7 +86,9 @@ for t in tasks:
         arms.append(("H0 local, run 1 (4th data point)", results_in(RUN1_H0[t])))
     arms += [("INV probes", arm_results(t, f"r2-h2-{t}-inv")), ("DOM probes", arm_results(t, f"r2-h2-{t}-dom"))]
     src = read(os.path.join(w, "final", "SOURCE")).strip()
-    comp = arm_results(t, f"r2-h2-{t}-final")
+    # Only a composed source has its own rollouts. Otherwise raw-runs may still hold final-* records
+    # from a discarded attempt under the same labels (run 2: card-stalled, mysql), which must not count.
+    comp = arm_results(t, f"r2-h2-{t}-final") if src == "composed" else []
     arms.append((f"composed" + (f" (= {src}, not rerun)" if src and src != "composed" else ""), comp))
     arms.append(("Meta-Harness i4b (transfer)", arm_results(t, f"r2-mh-i4b-{t}")))
     for name, rs in arms:

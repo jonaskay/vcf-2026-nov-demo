@@ -1,0 +1,18 @@
+I'm choosing **c12**. Candidates c01, c03, c04, c05, c06, c09, c11 and c12 all fix the slow sweep the same basic way. Each adds a `cards (status, last_active_at…)` index through a migration that appears in both schema files. Each also adds a cutoff on `cards.last_active_at` based on the shortest allowed postpone period, so the database can use that index while keeping the existing period check. The choice came down to whether the change would get through the project's checks as delivered.
+
+- **Why c12:** its extra cutoff changes the SQL that the existing Brakeman ignore entry in `config/brakeman.ignore` keys on. c12 is the only one of those eight that updates that entry. I can't confirm the new fingerprint without running Brakeman, but it is the only patch that deals with the problem at all. Without it, the existing SQL-injection ignore no longer matches and Brakeman would flag a new warning. The rest of c12 is a small, consistent change, and its test checks that SQLite actually uses the new index.
+- **Closest runner-up, c05 (and the near-identical c01):** same fix, plus a better batching cursor (`find_each(cursor: [:last_active_at, :id])`), but it leaves the stale ignore entry, so the merged change likely fails Brakeman.
+- **c03:** looks up the shortest stored period with an extra query, which handles older out-of-range data, but has the same Brakeman gap.
+- **c02:** deletes the ignore entry outright, even though its new code still builds SQL with string interpolation, so Brakeman likely still flags it. It also drops cards whose period isn't in the allowed list.
+- **c07 and c08:** rewrite the sweep to loop over boards. c08 also changes `SystemCommenter`, which wasn't asked for, and removes the `board_id` index.
+- **c10:** rewrites the sweep per account with no new index.
+
+<why>
+Decided on operational fitness. c12 adds the index and the cutoff that lets the database use it, updates both schema files, and is the only one of the eight index-plus-cutoff patches that updates the Brakeman ignore entry its query change breaks.
+Runner-up c05 (and twin c01) has the same fix plus a better batching cursor, but leaves that ignore entry stale, so Brakeman likely fails on merge.
+c02 deletes the ignore entry while still building SQL by interpolation; c08 adds an unrequested SystemCommenter change and drops the board_id index; c07 and c10 rewrite the sweep more broadly.
+</why>
+
+```choice
+c12
+```

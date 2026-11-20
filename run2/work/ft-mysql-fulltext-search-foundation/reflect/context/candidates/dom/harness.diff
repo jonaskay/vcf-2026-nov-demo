@@ -1,0 +1,44 @@
+diff -ruN -x .keep base_harness/skills/card-content-search/SKILL.md candidates/dom/harness/skills/card-content-search/SKILL.md
+--- base_harness/skills/card-content-search/SKILL.md	1970-01-01 02:00:00
++++ candidates/dom/harness/skills/card-content-search/SKILL.md	2026-11-18 10:39:52
+@@ -0,0 +1,29 @@
++# Skill: searching cards and comments by their text
++
++Use this when a request asks to find cards or comments by what they say. Read the request again for its exact URL, parameter name, ordering and markup. Those values come from the request, not from this skill.
++
++## Workspace facts (seen in this checkout)
++
++- Visibility: `Current.user.accessible_cards` (`app/models/user/accessor.rb`: `has_many :accessible_cards, through: :boards, source: :cards`, plus `accessible_comments`). It is based on live `Access` rows, so a revoked access takes effect on the next query. `CardsController#set_card` and `CardScoped` use the same association.
++- Drafts: `Card::Statuses` defines `enum :status, %w[ drafted published ]`, so `.published` is the scope to use. `Filter#cards` starts from `creator.accessible_cards.preloaded.published`. A draft card's comments are only excluded if the query joins back to a *published* card.
++- Ordering: `Card.reverse_chronologically` is `order created_at: :desc, id: :desc` (`app/models/card.rb`). `chronologically` and `latest` (`last_active_at`) are separate scopes.
++- Text storage: `Card` has `has_rich_text :description` and `Comment` has `has_rich_text :body`. Both are stored in `action_text_rich_texts` (`account_id` NOT NULL, `body`, `name`, `record_type`, `record_id`, plus a unique index on `[record_type, record_id, name]`). See `db/schema.rb` and `db/schema_sqlite.rb`, around line 88 in each. **`body` holds HTML**, not plain text. For example, `test/controllers/cards_controller_test.rb` stores `<action-text-attachment sgid="gid://fizzy/Card/...">` in a description. The rich-text fixtures (`test/fixtures/action_text/rich_texts.yml`) are plain sentences: "I agree.", "Same, let's do it.", "The text is overflowing the container.".
++- Adapters: the test suite runs on **SQLite**. `config/database.yml` loads `database.#{Fizzy.db_adapter}.yml`, and the `test:` block in `config/database.sqlite.yml` is `storage/test.sqlite3` with `schema_dump: schema_sqlite.rb`. `db/schema.rb` is the MySQL dump (`utf8mb4_0900_ai_ci`). Raw SQL has to work on both. MySQL-only syntax (`MATCH … AGAINST`, FULLTEXT) is never exercised by the tests here.
++- Existing helpers: `ExcerptHelper#format_excerpt` (`app/helpers/excerpt_helper.rb`) already converts rich text to plain text with `to_plain_text`, so reuse that pattern rather than re-deriving it. ActionView `highlight` wraps matches in `<mark>` and escapes the surrounding text, so `<script>` in a title is not rendered. ActionView `excerpt` is also available. Pagination is `set_page_and_extract_portion_from` (geared_pagination) together with `with_automatic_pagination` (`app/helpers/pagination_helper.rb`).
++- Another card search already exists: `Prompts::CardsController#search_cards` (`app/controllers/prompts/cards_controller.rb`). Read it before writing a new query.
++- Entry points (optional): the jump menu hotkeys in `app/views/my/menus/_jump.html.erb` (`filter_hotkey_link`, 1–3 are taken) and `app/views/my/menus/_shortcuts.html.erb` (`filter_place_menu_item`). An `icon--search` icon exists.
++
++## Contract: check each item before finishing
++
++1. **Words, not one phrase.** Split the query into words (`q.to_s.split`, then drop blanks and duplicates). A blank query returns no results, not every card. A card matches when **every** word appears somewhere in its title, its description or one of its comments. Chain one condition per word. Test it: the fixture card "The logo isn't big enough" must be found by `logo big` and by `big logo`.
++2. **Same rule for the query and the display.** Whatever selects a card must also produce the highlighted text. Pass the word list to `highlight(text, words)`; it accepts an Array. For description and comment snippets, use plain text (`to_plain_text`), never the stored HTML. Make sure each card shows where it matched, including a comment-only match.
++3. **Escape wildcards.** Use `sanitize_sql_like(word, "!")` with `ESCAPE '!'` in every `LIKE`, so `%` and `_` in a query match literally.
++4. **Visibility in SQL, not in Ruby.** Start from `Current.user.accessible_cards.published`. Comment matches must go through that same relation (an `EXISTS` on `comments.card_id = cards.id` inside it). Never search `Comment` on its own.
++5. **Known limit of matching on `body`.** `LIKE` on `action_text_rich_texts.body` also matches tag and attribute text (`p`, `strong`, `href`, `sgid`, `attachment`), and `&` is stored as `&amp;`. Do not hide this. If you keep `LIKE` on the source tables, which is the live approach and works with fixtures, say so in your final reasoning. A plain-text search table maintained by callbacks fixes it, but it is OPTIONAL and only worth doing if items 1–4 already pass with time to spare. It then also needs: one migration, with `db/schema.rb` and `db/schema_sqlite.rb` both updated; a backfill of existing published content; fixture coverage (fixtures skip callbacks, so fixture cards would otherwise stop being found); and re-indexing on title/description edits, on publish, and when a comment is created, edited or destroyed.
++
++## Test facts
++
++- Integration tests: `sign_in_as :kevin` and `logout_and_sign_in_as :jz`. `with_current_user(:kevin) { … }` works for model setup. `Current.account` is already set to `accounts("37s")` in setup.
++- Boards: `boards(:writebook)` has `all_access: true`, and david, jz and kevin can access it. `boards(:private)` has `all_access: false`, and only kevin can access it. `board.accesses.revoke_from(user)` **does nothing on an all-access board** (`Board::Accessible`). Test revocation on `boards(:private)`, or set `all_access: false` first.
++- Draft comments: `Comment` validates `card_is_commentable` (`commentable?` is `published?`), so `draft.comments.create!` raises. Build the comment with `account:` set and call `save!(validate: false)`, or insert it directly. The rich-text row needs `account_id` as well.
++- Run the new test file, then `bin/rails test`.
+diff -ruN -x .keep base_harness/system.md candidates/dom/harness/system.md
+--- base_harness/system.md	2026-11-18 10:39:52
++++ candidates/dom/harness/system.md	2026-11-18 10:39:52
+@@ -1,5 +1,7 @@
+ You can execute bash commands and edit files to implement the necessary changes.
+ 
++When the request asks to find, search or match cards or comments by their text (title, description, comment body), run `cat /opt/harness/skills/card-content-search/SKILL.md` and follow it.
++
+ ## Recommended Workflow
+ 
+ This workflow should be done step-by-step so that you can iterate on your changes and any possible problems.

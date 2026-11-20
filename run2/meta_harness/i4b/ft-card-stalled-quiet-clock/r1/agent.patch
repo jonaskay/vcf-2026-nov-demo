@@ -1,0 +1,826 @@
+diff --git a/app/models/card.rb b/app/models/card.rb
+index 57da45c..fd0a1c2 100644
+--- a/app/models/card.rb
++++ b/app/models/card.rb
+@@ -1,7 +1,7 @@
+ class Card < ApplicationRecord
+   include Accessible, Assignable, Attachments, Broadcastable, Closeable, Colored, Commentable,
+     Entropic, Eventable, Exportable, Golden, Mentions, Multistep, Pinnable, Postponable, Promptable,
+-    Readable, Searchable, Statuses, Storage::Tracked, Taggable, Triageable, Watchable
++    Readable, Searchable, Stalled, Statuses, Storage::Tracked, Taggable, Triageable, Watchable
+ 
+   belongs_to :account, default: -> { board.account }
+   belongs_to :board
+@@ -32,6 +32,7 @@ class Card < ApplicationRecord
+     when "maybe" then awaiting_triage
+     when "not_now" then postponed.latest
+     when "golden" then golden
++    when "stalled" then stalled
+     when "draft" then drafted
+     else all
+     end
+diff --git a/app/models/card/eventable.rb b/app/models/card/eventable.rb
+index 9454465..f27eb94 100644
+--- a/app/models/card/eventable.rb
++++ b/app/models/card/eventable.rb
+@@ -12,13 +12,17 @@ module Card::Eventable
+   def event_was_created(event)
+     transaction do
+       create_system_comment_for(event)
+-      touch_last_active_at unless was_just_published?
++      record_activity_at(event.created_at) unless was_just_published?
+     end
+   end
+ 
+   def touch_last_active_at
+-    # Not using touch so that we can detect attribute change on callbacks
+-    update!(last_active_at: Time.current)
++    record_activity_at(Time.current)
++  end
++
++  def record_activity_at(at)
++    # Keep the source activity timestamp for derived states while retaining callback visibility.
++    update!(last_active_at: at)
+   end
+ 
+   private
+diff --git a/app/models/card/stalled.rb b/app/models/card/stalled.rb
+new file mode 100644
+index 0000000..50e5dc6
+--- /dev/null
++++ b/app/models/card/stalled.rb
+@@ -0,0 +1,67 @@
++module Card::Stalled
++  extend ActiveSupport::Concern
++
++  QUIET_PERIOD = 2.weeks
++
++  included do
++    scope :stalled, -> do
++      period = "COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period)"
++      system_role = connection.quote(User.roles.fetch("system"))
++
++      # A qualifying burst must still be the latest recorded activity; anything after it resets the state.
++      assignment_or_reopen_burst = <<~SQL.squish
++        EXISTS (
++          SELECT 1
++          FROM events stalled_events
++          WHERE stalled_events.eventable_type = 'Card'
++            AND stalled_events.eventable_id = cards.id
++            AND stalled_events.action IN ('card_assigned', 'card_reopened')
++            AND stalled_events.created_at = cards.last_active_at
++        )
++      SQL
++
++      comment_burst = <<~SQL.squish
++        EXISTS (
++          SELECT 1
++          FROM comments recent_comments
++          INNER JOIN users recent_commenters ON recent_commenters.id = recent_comments.creator_id
++          WHERE recent_comments.card_id = cards.id
++            AND recent_commenters.role != #{system_role}
++            AND recent_comments.created_at = cards.last_active_at
++            AND (
++              SELECT COUNT(*)
++              FROM comments burst_comments
++              INNER JOIN users burst_commenters ON burst_commenters.id = burst_comments.creator_id
++              WHERE burst_comments.card_id = cards.id
++                AND burst_commenters.role != #{system_role}
++                AND burst_comments.created_at >= #{connection.date_subtract('recent_comments.created_at', "#{period} / 3")}
++                AND burst_comments.created_at <= recent_comments.created_at
++            ) >= 3
++            AND (
++              SELECT COUNT(DISTINCT burst_comments.creator_id)
++              FROM comments burst_comments
++              INNER JOIN users burst_commenters ON burst_commenters.id = burst_comments.creator_id
++              WHERE burst_comments.card_id = cards.id
++                AND burst_commenters.role != #{system_role}
++                AND burst_comments.created_at >= #{connection.date_subtract('recent_comments.created_at', "#{period} / 3")}
++                AND burst_comments.created_at <= recent_comments.created_at
++            ) >= 2
++        )
++      SQL
++
++      joins(board: :account)
++        .left_outer_joins(board: :entropy)
++        .joins("LEFT OUTER JOIN entropies AS account_entropies ON account_entropies.account_id = accounts.id AND account_entropies.container_type = 'Account' AND account_entropies.container_id = accounts.id")
++        .where("cards.last_active_at <= ?", QUIET_PERIOD.ago)
++        .where("#{assignment_or_reopen_burst} OR #{comment_burst}")
++    end
++  end
++
++  def stalled?
++    if persisted?
++      self.class.stalled.where(id: id).exists?
++    else
++      false
++    end
++  end
++end
+diff --git a/app/models/comment/eventable.rb b/app/models/comment/eventable.rb
+index 7fe7abe..0fbd50d 100644
+--- a/app/models/comment/eventable.rb
++++ b/app/models/comment/eventable.rb
+@@ -8,7 +8,7 @@ module Comment::Eventable
+   end
+ 
+   def event_was_created(event)
+-    card.touch_last_active_at
++    card.record_activity_at(created_at)
+   end
+ 
+   private
+diff --git a/app/models/filter.rb b/app/models/filter.rb
+index 63884ea..07ed69b 100644
+--- a/app/models/filter.rb
++++ b/app/models/filter.rb
+@@ -84,10 +84,10 @@ class Filter < ApplicationRecord
+     end
+ 
+     def include_closed_cards?
+-      only_closed? || card_ids.present?
++      only_closed? || card_ids.present? || indexed_by.stalled?
+     end
+ 
+     def include_not_now_cards?
+-      indexed_by.not_now? || card_ids.present?
++      indexed_by.not_now? || card_ids.present? || indexed_by.stalled?
+     end
+ end
+diff --git a/app/models/filter/fields.rb b/app/models/filter/fields.rb
+index d2b7ff0..b5cac3f 100644
+--- a/app/models/filter/fields.rb
++++ b/app/models/filter/fields.rb
+@@ -1,7 +1,7 @@
+ module Filter::Fields
+   extend ActiveSupport::Concern
+ 
+-  INDEXES = %w[ all closed not_now postponing_soon golden ]
++  INDEXES = %w[ all closed not_now postponing_soon golden stalled ]
+   SORTED_BY = %w[ newest oldest latest ]
+ 
+   delegate :default_value?, to: :class
+diff --git a/app/models/reaction.rb b/app/models/reaction.rb
+index be5fc5d..a3ac6dd 100644
+--- a/app/models/reaction.rb
++++ b/app/models/reaction.rb
+@@ -11,6 +11,6 @@ class Reaction < ApplicationRecord
+ 
+   private
+     def register_card_activity
+-      reactable.card.touch_last_active_at
++      reactable.card.record_activity_at(created_at)
+     end
+ end
+diff --git a/app/models/user/day_timeline.rb b/app/models/user/day_timeline.rb
+index 137122f..c0459b2 100644
+--- a/app/models/user/day_timeline.rb
++++ b/app/models/user/day_timeline.rb
+@@ -17,6 +17,10 @@ class User::DayTimeline
+     filtered_events.where(created_at: window).order(created_at: :desc)
+   end
+ 
++  def stalled_card_ids
++    @stalled_card_ids ||= Card.stalled.where(id: events.map { |event| event.card.id }.uniq).pluck(:id)
++  end
++
+   def next_day
+     latest_event_before&.created_at
+   end
+diff --git a/app/views/cards/_card.json.jbuilder b/app/views/cards/_card.json.jbuilder
+index bccf51d..56bf6c1 100644
+--- a/app/views/cards/_card.json.jbuilder
++++ b/app/views/cards/_card.json.jbuilder
+@@ -1,4 +1,4 @@
+-json.cache! card do
++json.cache! [ card, card.stalled? ] do
+   json.(card, :id, :number, :title, :status)
+   json.description card.description.to_plain_text
+   json.description_html card.description.to_s
+@@ -8,6 +8,7 @@ json.cache! card do
+   json.tags card.tags.pluck(:title).sort
+ 
+   json.closed card.closed?
++  json.stalled card.stalled?
+   json.postponed card.postponed?
+   json.golden card.golden?
+   json.last_active_at card.last_active_at.utc
+diff --git a/app/views/cards/_container.html.erb b/app/views/cards/_container.html.erb
+index b6823bd..e647fbb 100644
+--- a/app/views/cards/_container.html.erb
++++ b/app/views/cards/_container.html.erb
+@@ -1,5 +1,5 @@
+ <section id="<%= dom_id(card, :card_container) %>" class="card-perma" style="--card-color: <%= card.color %>;" data-controller="dialog-manager bridge--form">
+-  <% cache card do %>
++  <% cache [ card, card.stalled? ] do %>
+     <div class="card-perma__actions card-perma__actions--left">
+       <%= render "cards/container/gild", card: card if card.published? && !card.closed? %>
+       <%= render "cards/container/image", card: card %>
+diff --git a/app/views/cards/display/_previews.html.erb b/app/views/cards/display/_previews.html.erb
+index 04296f7..4098933 100644
+--- a/app/views/cards/display/_previews.html.erb
++++ b/app/views/cards/display/_previews.html.erb
+@@ -1 +1 @@
+-<%= render partial: "cards/display/preview", collection: cards, as: :card, locals: { draggable: local_assigns.fetch(:draggable, false) }, cached: true %>
++<%= render partial: "cards/display/preview", collection: cards, as: :card, locals: { draggable: local_assigns.fetch(:draggable, false) }, cached: ->(card) { [ card, card.stalled? ] } %>
+diff --git a/app/views/cards/display/_public_previews.html.erb b/app/views/cards/display/_public_previews.html.erb
+index 3e97e05..f5b96ee 100644
+--- a/app/views/cards/display/_public_previews.html.erb
++++ b/app/views/cards/display/_public_previews.html.erb
+@@ -1 +1 @@
+-<%= render partial: "cards/display/public_preview", collection: cards, as: :card, cached: true %>
++<%= render partial: "cards/display/public_preview", collection: cards, as: :card, cached: ->(card) { [ card, card.stalled? ] } %>
+diff --git a/app/views/cards/display/_stalled.html.erb b/app/views/cards/display/_stalled.html.erb
+new file mode 100644
+index 0000000..c082352
+--- /dev/null
++++ b/app/views/cards/display/_stalled.html.erb
+@@ -0,0 +1,3 @@
++<% if card.stalled? %>
++  <span class="card__stalled" role="status">Stalled</span>
++<% end %>
+diff --git a/app/views/cards/display/common/_meta.html.erb b/app/views/cards/display/common/_meta.html.erb
+index 521230c..78951d8 100644
+--- a/app/views/cards/display/common/_meta.html.erb
++++ b/app/views/cards/display/common/_meta.html.erb
+@@ -1,4 +1,5 @@
+ <div class="card__meta" id="<%= dom_id(card, :meta) %>">
++  <%= render "cards/display/stalled", card: card %>
+   <div class="card__meta-avatars card__meta-avatars--author">
+     <%= avatar_tag card.creator, tabindex: (local_assigns.key?(:preview) && local_assigns[:preview]) ? -1 : 0 %>
+   </div>
+diff --git a/app/views/cards/display/preview/_meta.html.erb b/app/views/cards/display/preview/_meta.html.erb
+index c06c9a3..3861bf9 100644
+--- a/app/views/cards/display/preview/_meta.html.erb
++++ b/app/views/cards/display/preview/_meta.html.erb
+@@ -1,4 +1,5 @@
+ <div class="card__meta" id="<%= dom_id(card, :meta) %>">
++  <%= render "cards/display/stalled", card: card %>
+   <div class="card__meta-avatars card__meta-avatars--author">
+     <%= avatar_tag card.creator, tabindex: (local_assigns.key?(:preview) && local_assigns[:preview]) ? -1 : 0 %>
+   </div>
+diff --git a/app/views/cards/display/public_preview/_meta.html.erb b/app/views/cards/display/public_preview/_meta.html.erb
+index 0547345..9f542d5 100644
+--- a/app/views/cards/display/public_preview/_meta.html.erb
++++ b/app/views/cards/display/public_preview/_meta.html.erb
+@@ -1,4 +1,5 @@
+ <div class="card__meta" id="<%= dom_id(card, :meta) %>">
++  <%= render "cards/display/stalled", card: card %>
+   <div class="card__meta-avatars card__meta-avatars--author">
+     <%= avatar_preview_tag card.creator %>
+   </div>
+diff --git a/app/views/cards/drafts/_container.html.erb b/app/views/cards/drafts/_container.html.erb
+index fa7134b..0b53352 100644
+--- a/app/views/cards/drafts/_container.html.erb
++++ b/app/views/cards/drafts/_container.html.erb
+@@ -1,5 +1,5 @@
+ <section id="<%= dom_id(card, :card_container) %>" class="card-perma card-perma--draft" style="--card-color: <%= card.color %>;">
+-  <% cache card do %>
++  <% cache [ card, card.stalled? ] do %>
+     <div class="card-perma__actions card-perma__actions--left">
+       <%= render "cards/container/image", card: card %>
+     </div>
+diff --git a/app/views/cards/previews/index.turbo_stream.erb b/app/views/cards/previews/index.turbo_stream.erb
+index a7bc709..d8d793b 100644
+--- a/app/views/cards/previews/index.turbo_stream.erb
++++ b/app/views/cards/previews/index.turbo_stream.erb
+@@ -1,7 +1,7 @@
+ <%= turbo_stream.remove "#{params[:target]}-load-page-#{@page.number}" %>
+ 
+ <%= turbo_stream.append params[:target] do %>
+-  <%= render partial: "cards/display/preview", collection: @page.records, as: :card, cached: true %>
++  <%= render partial: "cards/display/preview", collection: @page.records, as: :card, cached: ->(card) { [ card, card.stalled? ] } %>
+ 
+   <% unless @page.last? %>
+     <%= cards_next_page_link params[:target], page: @page, filter: @filter, fetch_on_visible: @filter.indexed_by.closed? %>
+diff --git a/app/views/events/_event.html.erb b/app/views/events/_event.html.erb
+index 6037004..d640cf6 100644
+--- a/app/views/events/_event.html.erb
++++ b/app/views/events/_event.html.erb
+@@ -1,4 +1,4 @@
+-<% cache event do %>
++<% cache [ event, event.card.stalled? ] do %>
+   <%# Template Dependency Updated: _layout.html.erb 2026-01-26 %>
+   <% if lookup_context.exists?("events/event/eventable/_#{event.action}") %>
+     <%= render "events/event/eventable/#{event.action}", event: event %>
+diff --git a/app/views/events/day_timeline/_column.html.erb b/app/views/events/day_timeline/_column.html.erb
+index 0778001..116b3d1 100644
+--- a/app/views/events/day_timeline/_column.html.erb
++++ b/app/views/events/day_timeline/_column.html.erb
+@@ -11,7 +11,7 @@
+   </h3>
+   <% column.events_by_hour.each do |hour, events| %>
+     <%= events_at_hour_container(column, hour) do %>
+-      <%= render partial: "events/event", collection: events, cached: true %>
++      <%= render partial: "events/event", collection: events, cached: ->(event) { [ event, event.card.stalled? ] } %>
+       <%= local_datetime_tag events.first.created_at, class: "event__timestamp txt-small translucent" %>
+     <% end %>
+   <% end %>
+diff --git a/app/views/events/day_timeline/_columns.html.erb b/app/views/events/day_timeline/_columns.html.erb
+index 16d09ed..2d04689 100644
+--- a/app/views/events/day_timeline/_columns.html.erb
++++ b/app/views/events/day_timeline/_columns.html.erb
+@@ -1,4 +1,4 @@
+-<% cache [ day_timeline.events, Time.zone.name ] do %>
++<% cache [ day_timeline.events, day_timeline.stalled_card_ids, Time.zone.name ] do %>
+   <%# Template Dependency Updated: _layout.html.erb 2026-01-26 %>
+   <% if day_timeline.has_activity? %>
+     <div class="events__columns">
+diff --git a/app/views/events/day_timeline/columns/_events.html.erb b/app/views/events/day_timeline/columns/_events.html.erb
+index ac14102..7052801 100644
+--- a/app/views/events/day_timeline/columns/_events.html.erb
++++ b/app/views/events/day_timeline/columns/_events.html.erb
+@@ -1,7 +1,7 @@
+ <div class="events--grid">
+   <% column.events_by_hour.each do |hour, events| %>
+     <% if events.any? %>
+-      <%= render partial: "events/event", collection: events, cached: true %>
++      <%= render partial: "events/event", collection: events, cached: ->(event) { [ event, event.card.stalled? ] } %>
+     <% end %>
+   <% end %>
+ </div>
+diff --git a/app/views/events/event/_layout.html.erb b/app/views/events/event/_layout.html.erb
+index 8b7d2d5..bbc7e1d 100644
+--- a/app/views/events/event/_layout.html.erb
++++ b/app/views/events/event/_layout.html.erb
+@@ -22,6 +22,8 @@
+       <%= icon_tag event_action_icon(event), class: "event__icon" %>
+     <% end %>
+   </div>
++  <%= render "cards/display/stalled", card: event.card %>
++
+   <div class="event__content">
+     <div class="flex align-start gap">
+       <div class="avatar txt-x-small">
+diff --git a/app/views/notifications/_notification.html.erb b/app/views/notifications/_notification.html.erb
+index 6bed2aa..9254eda 100644
+--- a/app/views/notifications/_notification.html.erb
++++ b/app/views/notifications/_notification.html.erb
+@@ -1,4 +1,4 @@
+-<% cache notification do %>
++<% cache [ notification, notification.card.stalled? ] do %>
+   <%# Helper Dependency Updated: avatar_image_tag 2025-12-15 %>
+   <%= notification_tag notification do %>
+     <%= render "notifications/notification/header", notification: notification do %>
+diff --git a/app/views/notifications/_notification.json.jbuilder b/app/views/notifications/_notification.json.jbuilder
+index 2b11165..efb7474 100644
+--- a/app/views/notifications/_notification.json.jbuilder
++++ b/app/views/notifications/_notification.json.jbuilder
+@@ -1,4 +1,4 @@
+-json.cache! notification do
++json.cache! [ notification, notification.card.stalled? ] do
+   json.(notification, :id, :unread_count)
+   json.read notification.read?
+   json.read_at notification.read_at&.utc
+@@ -13,6 +13,7 @@ json.cache! notification do
+     json.(notification.card, :id, :number, :title, :status)
+     json.board_name notification.card.board.name
+     json.closed notification.card.closed?
++    json.stalled notification.card.stalled?
+     json.postponed notification.card.postponed?
+     json.url card_url(notification.card)
+     if notification.card.column
+diff --git a/app/views/notifications/index.json.jbuilder b/app/views/notifications/index.json.jbuilder
+index e8d9a93..c873126 100644
+--- a/app/views/notifications/index.json.jbuilder
++++ b/app/views/notifications/index.json.jbuilder
+@@ -1 +1 @@
+-json.array! (@unread || []) + @page.records, partial: "notifications/notification", as: :notification, cached: true
++json.array! (@unread || []) + @page.records, partial: "notifications/notification", as: :notification, cached: ->(notification) { [ notification, notification.card.stalled? ] }
+diff --git a/app/views/notifications/index/_read_notifications.html.erb b/app/views/notifications/index/_read_notifications.html.erb
+index c73d1d3..08a5463 100644
+--- a/app/views/notifications/index/_read_notifications.html.erb
++++ b/app/views/notifications/index/_read_notifications.html.erb
+@@ -3,7 +3,7 @@
+     <h2 class="txt-medium margin-block-start-double margin-block-end-half txt-uppercase translucent">Previously seen</h2>
+ 
+     <div id="notifications_list_read" contents>
+-      <%= render partial: "notifications/notification", collection: page.records, cached: true %>
++      <%= render partial: "notifications/notification", collection: page.records, cached: ->(notification) { [ notification, notification.card.stalled? ] } %>
+     </div>
+   </section>
+ <% end %>
+diff --git a/app/views/notifications/index/_unread_notifications.html.erb b/app/views/notifications/index/_unread_notifications.html.erb
+index fed57db..3a3795c 100644
+--- a/app/views/notifications/index/_unread_notifications.html.erb
++++ b/app/views/notifications/index/_unread_notifications.html.erb
+@@ -11,7 +11,7 @@
+   <% end %>
+ 
+   <div id="notifications_list" contents>
+-    <%= render partial: "notifications/notification", collection: unread, cached: true %>
++    <%= render partial: "notifications/notification", collection: unread, cached: ->(notification) { [ notification, notification.card.stalled? ] } %>
+   </div>
+ 
+   <% if unread.any? %>
+diff --git a/app/views/notifications/notification/_header.html.erb b/app/views/notifications/notification/_header.html.erb
+index 8526128..5fda343 100644
+--- a/app/views/notifications/notification/_header.html.erb
++++ b/app/views/notifications/notification/_header.html.erb
+@@ -9,6 +9,8 @@
+   </span>
+   </div>
+ 
++  <%= render "cards/display/stalled", card: notification.card %>
++
+   <div class="card__notification-meta overflow-ellipsis flex-item-grow flex-item-no-shrink txt-align-end">
+     <span class="card__creator"><%= notification.creator.familiar_name %></span>
+   </div>
+diff --git a/app/views/notifications/trays/show.html.erb b/app/views/notifications/trays/show.html.erb
+index f61c52d..7e5eb64 100644
+--- a/app/views/notifications/trays/show.html.erb
++++ b/app/views/notifications/trays/show.html.erb
+@@ -1,3 +1,3 @@
+ <%= turbo_frame_tag "notifications" do %>
+-  <%= render partial: "notifications/notification", collection: @notifications, cached: true %>
++  <%= render partial: "notifications/notification", collection: @notifications, cached: ->(notification) { [ notification, notification.card.stalled? ] } %>
+ <% end %>
+diff --git a/app/views/public/boards/card_previews/index.turbo_stream.erb b/app/views/public/boards/card_previews/index.turbo_stream.erb
+index f88c6e5..b3af49c 100644
+--- a/app/views/public/boards/card_previews/index.turbo_stream.erb
++++ b/app/views/public/boards/card_previews/index.turbo_stream.erb
+@@ -2,7 +2,7 @@
+ 
+ <%= turbo_stream.append params[:target] do %>
+   <%= render partial: "cards/display/public_preview",
+-        board: @page.records, as: :card, locals: { draggable: true }, cached: true %>
++        board: @page.records, as: :card, locals: { draggable: true }, cached: ->(card) { [ card, card.stalled? ] } %>
+ 
+   <% unless @page.last? %>
+     <%= public_board_cards_next_page_link @board, params[:target], page: @page, fetch_on_visible: params[:target] == "closed-cards" %>
+diff --git a/test/controllers/cards/stalled_test.rb b/test/controllers/cards/stalled_test.rb
+new file mode 100644
+index 0000000..8c0d0e5
+--- /dev/null
++++ b/test/controllers/cards/stalled_test.rb
+@@ -0,0 +1,130 @@
++require "test_helper"
++
++class Cards::StalledTest < ActionDispatch::IntegrationTest
++  setup do
++    sign_in_as :kevin
++  end
++
++  test "cards index shows the stalled state" do
++    with_stalled_card do |card|
++      get cards_path(indexed_by: "stalled")
++
++      assert_response :success
++      assert_select "article.card[data-id='#{card.number}'] .card__stalled", text: "Stalled"
++      assert_select "[data-combobox-value='stalled']"
++    end
++  end
++
++  test "cards index filters and serializes stalled cards as JSON" do
++    with_stalled_card do |card|
++      get cards_path(format: :json), params: { indexed_by: "stalled" }
++
++      assert_response :success
++      results = response.parsed_body
++      assert_includes results.pluck("number"), card.number
++      assert_equal true, results.find { |item| item["number"] == card.number }["stalled"]
++      assert_not_includes results.pluck("number"), @not_stalled_card.number
++    end
++  end
++
++  test "card detail shows the stalled state" do
++    with_stalled_card do |card|
++      get card_path(card)
++
++      assert_response :success
++      assert_select "article.card .card__stalled", text: "Stalled"
++    end
++  end
++
++  test "card preview cache changes when the card becomes stalled" do
++    card = create_published_card("Card whose cache will change")
++    burst_at = Time.current
++
++    travel_to(burst_at) do
++      post card_self_assignment_path(card), as: :json
++      assert_response :no_content
++    end
++
++    travel_to(burst_at + 13.days) do
++      get cards_path
++
++      assert_response :success
++      assert_select "article.card[data-id='#{card.number}'] .card__stalled", count: 0
++    end
++
++    travel_to(burst_at + 14.days) do
++      get cards_path(indexed_by: "stalled")
++
++      assert_response :success
++      assert_select "article.card[data-id='#{card.number}'] .card__stalled", text: "Stalled"
++    end
++  end
++
++  test "stalled filter includes closed cards" do
++    card = create_published_card("Stalled closed card")
++    card.close(user: users(:david))
++    burst_at = Time.current
++
++    travel_to(burst_at) do
++      post card_self_assignment_path(card), as: :json
++      assert_response :no_content
++    end
++
++    travel_to(burst_at + 14.days) do
++      get cards_path(format: :json), params: { indexed_by: "stalled" }
++
++      assert_response :success
++      assert_includes response.parsed_body.pluck("number"), card.number
++    end
++  end
++
++  test "card JSON cache changes when the card becomes stalled" do
++    card = create_published_card("Card whose JSON cache will change")
++    burst_at = Time.current
++
++    travel_to(burst_at) do
++      post card_self_assignment_path(card), as: :json
++      assert_response :no_content
++    end
++
++    travel_to(burst_at + 13.days) do
++      get card_path(card, format: :json)
++      assert_response :success
++      assert_equal false, response.parsed_body.fetch("stalled")
++    end
++
++    travel_to(burst_at + 14.days) do
++      get card_path(card, format: :json)
++      assert_response :success
++      assert_equal true, response.parsed_body.fetch("stalled")
++    end
++  end
++
++  test "card show JSON includes whether the card is stalled" do
++    with_stalled_card do |card|
++      get card_path(card, format: :json)
++
++      assert_response :success
++      assert_equal true, response.parsed_body["stalled"]
++    end
++  end
++
++  private
++    def create_published_card(title)
++      post board_cards_path(boards(:writebook)), params: { card: { title: title } }, as: :json
++      assert_response :created
++      Card.find_by!(number: response.parsed_body.fetch("number"))
++    end
++
++    def with_stalled_card
++      card = create_published_card("Stalled card")
++      @not_stalled_card = create_published_card("Not stalled card")
++      burst_at = Time.current
++
++      travel_to(burst_at) do
++        post card_self_assignment_path(card), as: :json
++        assert_response :no_content
++      end
++      travel_to(burst_at + 14.days) { yield card }
++    end
++end
+diff --git a/test/controllers/public/cards_controller_test.rb b/test/controllers/public/cards_controller_test.rb
+index 8b3b9e0..2b0e05c 100644
+--- a/test/controllers/public/cards_controller_test.rb
++++ b/test/controllers/public/cards_controller_test.rb
+@@ -13,6 +13,47 @@ class Public::CardsControllerTest < ActionDispatch::IntegrationTest
+     assert_response :success
+   end
+ 
++  test "public card shows the stalled state" do
++    post board_cards_path(@board), params: { card: { title: "Stalled public card" } }, as: :json
++    assert_response :created
++    card = Card.find_by!(number: response.parsed_body.fetch("number"))
++    burst_at = Time.current
++
++    travel_to(burst_at) do
++      post card_self_assignment_path(card), as: :json
++      assert_response :no_content
++    end
++
++    travel_to(burst_at + 14.days) do
++      get public_board_card_path(@board.publication.key, card)
++
++      assert_response :success
++      assert_select "article.card .card__stalled", text: "Stalled"
++    end
++  end
++
++  test "public column previews show the stalled state" do
++    card = cards(:text)
++    card.comments.delete_all
++    card.events.delete_all
++    card.assignments.delete_all
++    card.reactions.delete_all
++    card.update_column(:last_active_at, Time.current)
++    burst_at = Time.current
++
++    travel_to(burst_at) do
++      post card_self_assignment_path(card), as: :json
++      assert_response :no_content
++    end
++
++    travel_to(burst_at + 14.days) do
++      get public_board_column_path(@board.publication.key, card.column)
++
++      assert_response :success
++      assert_select ".card__stalled", text: "Stalled"
++    end
++  end
++
+   test "not found if the board is not published" do
+     @board.unpublish
+     get public_board_card_path(@board.publication.key, @card)
+diff --git a/test/models/card/stalled_test.rb b/test/models/card/stalled_test.rb
+new file mode 100644
+index 0000000..3033f28
+--- /dev/null
++++ b/test/models/card/stalled_test.rb
+@@ -0,0 +1,182 @@
++require "test_helper"
++
++class Card::StalledTest < ActiveSupport::TestCase
++  setup do
++    Current.session = sessions(:david)
++    @board = boards(:writebook)
++    @card = create_card
++  end
++
++  test "three comments by two people inside one third of the board period stall after two quiet weeks" do
++    window = @board.auto_postpone_period / 3
++    burst_at = Time.current + window + 1.day
++
++    post_comment(at: burst_at - window + 1.hour, creator: users(:david))
++    post_comment(at: burst_at - 1.hour, creator: users(:kevin))
++    post_comment(at: burst_at, creator: users(:kevin))
++
++    travel_to(burst_at + 14.days) do
++      assert_predicate @card.reload, :stalled?
++      assert_includes Card.stalled, @card
++    end
++  end
++
++  test "comment burst window includes its exact one third edge" do
++    window = @board.auto_postpone_period / 3
++    burst_at = Time.current + window + 1.day
++
++    post_comment(at: burst_at - window, creator: users(:david))
++    post_comment(at: burst_at - 1.hour, creator: users(:kevin))
++    post_comment(at: burst_at, creator: users(:kevin))
++
++    travel_to(burst_at + 14.days) do
++      assert_predicate @card.reload, :stalled?
++    end
++  end
++
++  test "three comments just outside one third of the board period do not make a burst" do
++    window = @board.auto_postpone_period / 3
++    burst_at = Time.current + window + 1.day
++
++    post_comment(at: burst_at - window - 1.hour, creator: users(:david))
++    post_comment(at: burst_at - 1.hour, creator: users(:kevin))
++    post_comment(at: burst_at, creator: users(:kevin))
++
++    travel_to(burst_at + 14.days) do
++      assert_not @card.reload.stalled?
++      assert_not_includes Card.stalled, @card
++    end
++  end
++
++  test "two comments do not make a burst" do
++    burst_at = Time.current + 1.day
++
++    post_comment(at: burst_at - 1.hour, creator: users(:david))
++    post_comment(at: burst_at, creator: users(:kevin))
++
++    travel_to(burst_at + 14.days) do
++      assert_not @card.reload.stalled?
++    end
++  end
++
++  test "three comments from one person do not make a burst" do
++    burst_at = Time.current + 1.day
++
++    post_comment(at: burst_at - 1.hour, creator: users(:david))
++    post_comment(at: burst_at - 30.minutes, creator: users(:david))
++    post_comment(at: burst_at, creator: users(:david))
++
++    travel_to(burst_at + 14.days) do
++      assert_not @card.reload.stalled?
++    end
++  end
++
++  test "system comments do not count as people in a comment burst" do
++    burst_at = Time.current + 1.day
++
++    post_comment(at: burst_at - 1.hour, creator: users(:david))
++    post_comment(at: burst_at - 30.minutes, creator: @board.account.system_user)
++    post_comment(at: burst_at, creator: @board.account.system_user)
++
++    travel_to(burst_at + 14.days) do
++      assert_not @card.reload.stalled?
++    end
++  end
++
++  test "comment bursts use the board period instead of the account period" do
++    entropies(:writebook_board).update!(auto_postpone_period: 7.days)
++    entropies("37s_account").update!(auto_postpone_period: 90.days)
++    burst_at = Time.current + 4.days
++
++    post_comment(at: burst_at - 3.days, creator: users(:david))
++    post_comment(at: burst_at - 1.hour, creator: users(:kevin))
++    post_comment(at: burst_at, creator: users(:kevin))
++
++    travel_to(burst_at + 14.days) do
++      assert_not @card.reload.stalled?
++    end
++  end
++
++  test "comment bursts use the account period when the board has no override" do
++    entropies(:writebook_board).destroy!
++    entropies("37s_account").update!(auto_postpone_period: 7.days)
++    window = @board.reload.auto_postpone_period / 3
++    burst_at = Time.current + window + 1.day
++
++    post_comment(at: burst_at - window, creator: users(:david))
++    post_comment(at: burst_at - 1.hour, creator: users(:kevin))
++    post_comment(at: burst_at, creator: users(:kevin))
++
++    travel_to(burst_at + 14.days) do
++      assert_predicate @card.reload, :stalled?
++    end
++  end
++
++  test "assignment makes a burst and the two-week quiet threshold is inclusive" do
++    burst_at = Time.current
++    travel_to(burst_at) { @card.toggle_assignment(users(:kevin)) }
++
++    travel_to(burst_at + 14.days - 1.hour) do
++      assert_not @card.reload.stalled?
++    end
++
++    travel_to(burst_at + 14.days) do
++      assert_predicate @card.reload, :stalled?
++    end
++  end
++
++  test "stalled scope and predicate agree for every card" do
++    Card.find_each do |card|
++      assert_equal Card.stalled.where(id: card.id).exists?, card.stalled?, card.number.to_s
++    end
++  end
++
++  test "reopening makes a burst" do
++    burst_at = Time.current
++    travel_to(burst_at) do
++      @card.close
++      @card.reopen
++    end
++
++    travel_to(burst_at + 14.days) do
++      assert_predicate @card.reload, :stalled?
++    end
++  end
++
++  test "activity after a burst resets it until another burst happens" do
++    burst_at = Time.current
++    travel_to(burst_at) { @card.toggle_assignment(users(:kevin)) }
++    travel_to(burst_at + 1.day) { @card.update!(title: "An ordinary update") }
++    travel_to(burst_at + 2.days) do
++      @card.comments.create!(creator: users(:david), body: "A single comment")
++    end
++    travel_to(burst_at + 3.days) do
++      @card.reactions.create!(reacter: users(:david), content: "🎉")
++    end
++
++    travel_to(burst_at + 17.days) do
++      assert_not @card.reload.stalled?
++      assert_not_includes Card.stalled, @card
++    end
++
++    fresh_burst_at = burst_at + 4.days
++    travel_to(fresh_burst_at) { @card.toggle_assignment(users(:jz)) }
++
++    travel_to(fresh_burst_at + 14.days) do
++      assert_predicate @card.reload, :stalled?
++      assert_includes Card.stalled, @card
++    end
++  end
++
++  private
++    def create_card
++      card = @board.cards.create!(title: "Card for stalled test", creator: users(:david), status: :published)
++      Card.find(card.id)
++    end
++
++    def post_comment(at:, creator:)
++      travel_to(at) do
++        @card.comments.create!(creator: creator, body: "A comment")
++      end
++    end
++end

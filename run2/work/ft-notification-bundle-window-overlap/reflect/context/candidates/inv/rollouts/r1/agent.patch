@@ -1,0 +1,654 @@
+diff --git a/app/controllers/notifications/settings_controller.rb b/app/controllers/notifications/settings_controller.rb
+index 4af896a..731d3a6 100644
+--- a/app/controllers/notifications/settings_controller.rb
++++ b/app/controllers/notifications/settings_controller.rb
+@@ -1,5 +1,16 @@
+ class Notifications::SettingsController < ApplicationController
+   def show
+     @boards = Current.user.boards.alphabetically
++    @settings = Current.user.settings
+   end
++
++  def update
++    Current.user.settings.update!(settings_params)
++    redirect_to notifications_settings_path
++  end
++
++  private
++    def settings_params
++      params.expect(settings: [ :bundle_email_frequency ])
++    end
+ end
+diff --git a/app/jobs/notification/digest_window/delivery_job.rb b/app/jobs/notification/digest_window/delivery_job.rb
+new file mode 100644
+index 0000000..d590525
+--- /dev/null
++++ b/app/jobs/notification/digest_window/delivery_job.rb
+@@ -0,0 +1,7 @@
++class Notification::DigestWindow::DeliveryJob < ApplicationJob
++  discard_on ActiveJob::DeserializationError
++
++  def perform(digest_window)
++    digest_window.send_now
++  end
++end
+diff --git a/app/mailers/notification_digest_mailer.rb b/app/mailers/notification_digest_mailer.rb
+new file mode 100644
+index 0000000..9153195
+--- /dev/null
++++ b/app/mailers/notification_digest_mailer.rb
+@@ -0,0 +1,8 @@
++class NotificationDigestMailer < ApplicationMailer
++  def digest(digest_window, notifications)
++    @notifications = notifications
++    @user = digest_window.user
++
++    mail to: @user.identity.email_address, subject: "Your Fizzy notification digest"
++  end
++end
+diff --git a/app/models/notification.rb b/app/models/notification.rb
+index 1aac7ef..9afb324 100644
+--- a/app/models/notification.rb
++++ b/app/models/notification.rb
+@@ -1,5 +1,6 @@
+ class Notification < ApplicationRecord
+   include Notification::Pushable
++  include Notification::Digestible
+ 
+   belongs_to :account, default: -> { user.account }
+   belongs_to :user
+diff --git a/app/models/notification/digest_window.rb b/app/models/notification/digest_window.rb
+new file mode 100644
+index 0000000..b1c51ac
+--- /dev/null
++++ b/app/models/notification/digest_window.rb
+@@ -0,0 +1,45 @@
++class Notification::DigestWindow < ApplicationRecord
++  FREQUENCY_DURATIONS = {
++    "every_few_hours" => 4.hours,
++    "daily" => 1.day,
++    "weekly" => 1.week
++  }.freeze
++
++  belongs_to :account
++  belongs_to :user
++  has_many :notifications, foreign_key: :digest_window_id, dependent: :nullify
++
++  scope :pending, -> { where.not(open_user_id: nil) }
++
++  after_create_commit :deliver_later
++
++  def send_now
++    settings = user.settings
++
++    settings.with_lock do
++      reload
++
++      if open?
++        if ends_at <= Time.current
++          digest_notifications = notifications.preloaded.order(:created_at).to_a
++          update!(open_user_id: nil, sent_at: Time.current)
++
++          if settings.bundle_email_frequency != "never" && digest_notifications.any? && user.active? && account.active? && user.identity.present?
++            NotificationDigestMailer.digest(self, digest_notifications).deliver_now
++          end
++        else
++          deliver_later
++        end
++      end
++    end
++  end
++
++  def open?
++    open_user_id.present?
++  end
++
++  private
++    def deliver_later
++      Notification::DigestWindow::DeliveryJob.set(wait_until: ends_at).perform_later(self)
++    end
++end
+diff --git a/app/models/notification/digestible.rb b/app/models/notification/digestible.rb
+new file mode 100644
+index 0000000..9cdcb0a
+--- /dev/null
++++ b/app/models/notification/digestible.rb
+@@ -0,0 +1,38 @@
++module Notification::Digestible
++  extend ActiveSupport::Concern
++
++  included do
++    belongs_to :digest_window, class_name: "Notification::DigestWindow", optional: true
++
++    before_save :add_to_digest, if: :source_changed?
++  end
++
++  private
++    def source_changed?
++      will_save_change_to_source_id? || will_save_change_to_source_type?
++    end
++
++    def add_to_digest
++      if settings = user.settings
++        settings.with_lock do
++          if duration = Notification::DigestWindow::FREQUENCY_DURATIONS[settings.bundle_email_frequency]
++            window = user.notification_digest_windows.pending.lock.first
++
++            if window.nil?
++              started_at = Time.current.change(usec: 0)
++              window = user.notification_digest_windows.create!(
++                account: account,
++                open_user_id: user_id,
++                started_at: started_at,
++                ends_at: started_at + duration
++              )
++            end
++
++            self.digest_window = window
++          else
++            self.digest_window = nil
++          end
++        end
++      end
++    end
++end
+diff --git a/app/models/user.rb b/app/models/user.rb
+index bd4b1d5..cfbb686 100644
+--- a/app/models/user.rb
++++ b/app/models/user.rb
+@@ -10,6 +10,7 @@ class User < ApplicationRecord
+ 
+   has_many :comments, inverse_of: :creator, dependent: :destroy
+   has_many :notifications, dependent: :destroy
++  has_many :notification_digest_windows, class_name: "Notification::DigestWindow", dependent: :destroy
+ 
+   has_many :filters, foreign_key: :creator_id, inverse_of: :creator, dependent: :destroy
+   has_many :closures, dependent: :nullify
+diff --git a/app/models/user/settings.rb b/app/models/user/settings.rb
+index d83ffda..409c248 100644
+--- a/app/models/user/settings.rb
++++ b/app/models/user/settings.rb
+@@ -2,6 +2,10 @@ class User::Settings < ApplicationRecord
+   belongs_to :account, default: -> { user.account }
+   belongs_to :user
+ 
++  validates :bundle_email_frequency, inclusion: { in: %w[ never every_few_hours daily weekly ] }
++
++  after_update_commit :close_open_digest_windows, if: :saved_change_to_bundle_email_frequency?
++
+   def timezone
+     if timezone_name.present?
+       ActiveSupport::TimeZone[timezone_name] || default_timezone
+@@ -11,6 +15,15 @@ class User::Settings < ApplicationRecord
+   end
+ 
+   private
++    def close_open_digest_windows
++      with_lock do
++        if bundle_email_frequency == "never"
++          now = Time.current.change(usec: 0)
++          user.notification_digest_windows.pending.update_all(open_user_id: nil, ends_at: now)
++        end
++      end
++    end
++
+     def default_timezone
+       ActiveSupport::TimeZone["UTC"]
+     end
+diff --git a/app/views/mailers/notification_digest_mailer/digest.html.erb b/app/views/mailers/notification_digest_mailer/digest.html.erb
+new file mode 100644
+index 0000000..b61154c
+--- /dev/null
++++ b/app/views/mailers/notification_digest_mailer/digest.html.erb
+@@ -0,0 +1,10 @@
++<h1>Your notifications</h1>
++
++<ul>
++  <% @notifications.each do |notification| %>
++    <li>
++      <%= link_to notification.card.title.presence || "Card #{notification.card.number}", notification_url(notification) %>
++      on <%= notification.card.board.name %>
++    </li>
++  <% end %>
++</ul>
+diff --git a/app/views/mailers/notification_digest_mailer/digest.text.erb b/app/views/mailers/notification_digest_mailer/digest.text.erb
+new file mode 100644
+index 0000000..01b473d
+--- /dev/null
++++ b/app/views/mailers/notification_digest_mailer/digest.text.erb
+@@ -0,0 +1,5 @@
++Your notifications
++
++<% @notifications.each do |notification| %>
++* <%= notification.card.title.presence || "Card #{notification.card.number}" %> on <%= notification.card.board.name %>: <%= notification_url(notification) %>
++<% end %>
+diff --git a/app/views/notifications/settings/show.html.erb b/app/views/notifications/settings/show.html.erb
+index 53cf509..1dda5aa 100644
+--- a/app/views/notifications/settings/show.html.erb
++++ b/app/views/notifications/settings/show.html.erb
+@@ -14,6 +14,19 @@
+     </section>
+   </div>
+ 
++  <div class="settings__panel panel shadow">
++    <%= form_with url: notifications_settings_path, scope: :settings, method: :patch, class: "settings__section" do |form| %>
++      <h2 class="divider">Email</h2>
++      <div class="flex flex-column gap-half">
++        <%= form.label :bundle_email_frequency, "Send notification emails" %>
++        <%= form.select :bundle_email_frequency,
++            options_for_select([["Off", "never"], ["Every four hours", "every_few_hours"], ["Daily", "daily"], ["Weekly", "weekly"]], @settings.bundle_email_frequency),
++            {}, class: "input input--select" %>
++        <%= form.button "Save changes", type: :submit, class: "btn btn--link txt-small" %>
++      </div>
++    <% end %>
++  </div>
++
+   <div class="settings__panel panel shadow">
+     <%= render "notifications/settings/push_notifications" %>
+     <%= render "notifications/settings/native_devices" if Fizzy.saas? %>
+diff --git a/db/migrate/20261116225000_create_notification_digest_windows.rb b/db/migrate/20261116225000_create_notification_digest_windows.rb
+new file mode 100644
+index 0000000..5cefb9b
+--- /dev/null
++++ b/db/migrate/20261116225000_create_notification_digest_windows.rb
+@@ -0,0 +1,22 @@
++class CreateNotificationDigestWindows < ActiveRecord::Migration[8.2]
++  def change
++    add_column :user_settings, :bundle_email_frequency, :string, default: "never", null: false
++
++    create_table :notification_digest_windows, id: :uuid do |t|
++      t.uuid :account_id, null: false
++      t.uuid :user_id, null: false
++      t.uuid :open_user_id
++      t.datetime :started_at, null: false
++      t.datetime :ends_at, null: false
++      t.datetime :sent_at
++      t.timestamps
++
++      t.index :account_id
++      t.index :user_id
++      t.index :open_user_id, unique: true
++    end
++
++    add_column :notifications, :digest_window_id, :uuid
++    add_index :notifications, :digest_window_id
++  end
++end
+diff --git a/db/schema.rb b/db/schema.rb
+index 50950f4..ba56d10 100644
+--- a/db/schema.rb
++++ b/db/schema.rb
+@@ -10,7 +10,7 @@
+ #
+ # It's strongly recommended that you check this file into your version control system.
+ 
+-ActiveRecord::Schema[8.2].define(version: 2026_07_09_120000) do
++ActiveRecord::Schema[8.2].define(version: 2026_11_16_225000) do
+   create_table "accesses", id: :uuid, charset: "utf8mb4", collation: "utf8mb4_0900_ai_ci", force: :cascade do |t|
+     t.datetime "accessed_at"
+     t.uuid "account_id", null: false
+@@ -388,6 +388,20 @@ ActiveRecord::Schema[8.2].define(version: 2026_07_09_120000) do
+   end
+ 
+ 
++  create_table "notification_digest_windows", id: :uuid, charset: "utf8mb4", collation: "utf8mb4_0900_ai_ci", force: :cascade do |t|
++    t.uuid "account_id", null: false
++    t.uuid "user_id", null: false
++    t.uuid "open_user_id"
++    t.datetime "started_at", null: false
++    t.datetime "ends_at", null: false
++    t.datetime "sent_at"
++    t.datetime "created_at", null: false
++    t.datetime "updated_at", null: false
++    t.index ["account_id"], name: "index_notification_digest_windows_on_account_id"
++    t.index ["open_user_id"], name: "index_notification_digest_windows_on_open_user_id", unique: true
++    t.index ["user_id"], name: "index_notification_digest_windows_on_user_id"
++  end
++
+   create_table "notifications", id: :uuid, charset: "utf8mb4", collation: "utf8mb4_0900_ai_ci", force: :cascade do |t|
+     t.uuid "account_id", null: false
+     t.uuid "card_id", null: false
+@@ -399,8 +413,10 @@ ActiveRecord::Schema[8.2].define(version: 2026_07_09_120000) do
+     t.integer "unread_count", default: 0, null: false
+     t.datetime "updated_at", null: false
+     t.uuid "user_id", null: false
++    t.uuid "digest_window_id"
+     t.index ["account_id"], name: "index_notifications_on_account_id"
+     t.index ["creator_id"], name: "index_notifications_on_creator_id"
++    t.index ["digest_window_id"], name: "index_notifications_on_digest_window_id"
+     t.index ["source_type", "source_id"], name: "index_notifications_on_source"
+     t.index ["user_id", "card_id"], name: "index_notifications_on_user_id_and_card_id", unique: true
+     t.index ["user_id", "read_at", "updated_at"], name: "index_notifications_on_user_id_and_read_at_and_updated_at", order: { read_at: :desc, updated_at: :desc }
+@@ -772,6 +788,7 @@ ActiveRecord::Schema[8.2].define(version: 2026_07_09_120000) do
+     t.string "timezone_name"
+     t.datetime "updated_at", null: false
+     t.uuid "user_id", null: false
++    t.string "bundle_email_frequency", default: "never", null: false
+     t.index ["account_id"], name: "index_user_settings_on_account_id"
+     t.index ["user_id"], name: "index_user_settings_on_user_id"
+   end
+diff --git a/db/schema_sqlite.rb b/db/schema_sqlite.rb
+index 63e19f7..cc2464d 100644
+--- a/db/schema_sqlite.rb
++++ b/db/schema_sqlite.rb
+@@ -10,7 +10,7 @@
+ #
+ # It's strongly recommended that you check this file into your version control system.
+ 
+-ActiveRecord::Schema[8.2].define(version: 2026_07_09_120000) do
++ActiveRecord::Schema[8.2].define(version: 2026_11_16_225000) do
+   create_table "accesses", id: :uuid, force: :cascade do |t|
+     t.datetime "accessed_at"
+     t.uuid "account_id", null: false
+@@ -387,6 +387,20 @@ ActiveRecord::Schema[8.2].define(version: 2026_07_09_120000) do
+     t.index ["source_type", "source_id"], name: "index_mentions_on_source"
+   end
+ 
++  create_table "notification_digest_windows", id: :uuid, force: :cascade do |t|
++    t.uuid "account_id", null: false
++    t.uuid "user_id", null: false
++    t.uuid "open_user_id"
++    t.datetime "started_at", null: false
++    t.datetime "ends_at", null: false
++    t.datetime "sent_at"
++    t.datetime "created_at", null: false
++    t.datetime "updated_at", null: false
++    t.index ["account_id"], name: "index_notification_digest_windows_on_account_id"
++    t.index ["open_user_id"], name: "index_notification_digest_windows_on_open_user_id", unique: true
++    t.index ["user_id"], name: "index_notification_digest_windows_on_user_id"
++  end
++
+   create_table "notifications", id: :uuid, force: :cascade do |t|
+     t.uuid "account_id", null: false
+     t.uuid "card_id", null: false
+@@ -398,8 +412,10 @@ ActiveRecord::Schema[8.2].define(version: 2026_07_09_120000) do
+     t.integer "unread_count", default: 0, null: false
+     t.datetime "updated_at", null: false
+     t.uuid "user_id", null: false
++    t.uuid "digest_window_id"
+     t.index ["account_id"], name: "index_notifications_on_account_id"
+     t.index ["creator_id"], name: "index_notifications_on_creator_id"
++    t.index ["digest_window_id"], name: "index_notifications_on_digest_window_id"
+     t.index ["source_type", "source_id"], name: "index_notifications_on_source"
+     t.index ["user_id", "card_id"], name: "index_notifications_on_user_id_and_card_id", unique: true
+     t.index ["user_id", "read_at", "updated_at"], name: "index_notifications_on_user_id_and_read_at_and_updated_at", order: { read_at: :desc, updated_at: :desc }
+@@ -544,6 +560,7 @@ ActiveRecord::Schema[8.2].define(version: 2026_07_09_120000) do
+     t.string "timezone_name", limit: 255
+     t.datetime "updated_at", null: false
+     t.uuid "user_id", null: false
++    t.string "bundle_email_frequency", default: "never", null: false
+     t.index ["account_id"], name: "index_user_settings_on_account_id"
+     t.index ["user_id"], name: "index_user_settings_on_user_id"
+   end
+diff --git a/test/controllers/notifications/settings_controller_test.rb b/test/controllers/notifications/settings_controller_test.rb
+index 1eeceba..fb08e03 100644
+--- a/test/controllers/notifications/settings_controller_test.rb
++++ b/test/controllers/notifications/settings_controller_test.rb
+@@ -7,9 +7,22 @@ class Notifications::SettingsControllerTest < ActionDispatch::IntegrationTest
+     sign_in_as @user
+   end
+ 
+-  test "show" do
++  test "show includes notification email frequencies" do
+     get notifications_settings_path
+ 
+     assert_response :success
++    assert_select 'select[name="settings[bundle_email_frequency]"]' do
++      assert_select 'option[value="never"]'
++      assert_select 'option[value="every_few_hours"]'
++      assert_select 'option[value="daily"]'
++      assert_select 'option[value="weekly"]'
++    end
++  end
++
++  test "update saves the notification email frequency" do
++    patch notifications_settings_path, params: { settings: { bundle_email_frequency: "weekly" } }
++
++    assert_redirected_to notifications_settings_path
++    assert_equal "weekly", @user.settings.reload.bundle_email_frequency
+   end
+ end
+diff --git a/test/mailers/notification_digest_mailer_test.rb b/test/mailers/notification_digest_mailer_test.rb
+new file mode 100644
+index 0000000..c8d7198
+--- /dev/null
++++ b/test/mailers/notification_digest_mailer_test.rb
+@@ -0,0 +1,19 @@
++require "test_helper"
++
++class NotificationDigestMailerTest < ActionMailer::TestCase
++  setup do
++    users(:david).settings.update!(bundle_email_frequency: "every_few_hours")
++  end
++
++  test "digest includes notification details and a card link" do
++    notification = Notification.create!(
++      user: users(:david), source: events(:layout_commented), creator: users(:kevin)
++    )
++    email = NotificationDigestMailer.digest(notification.digest_window, [ notification ])
++
++    assert_equal [ "david@37signals.com" ], email.to
++    assert_equal "Your Fizzy notification digest", email.subject
++    assert_match cards(:layout).title, email.body.encoded
++    assert_match notification.id, email.body.encoded
++  end
++end
+diff --git a/test/models/notification/digest_window_test.rb b/test/models/notification/digest_window_test.rb
+new file mode 100644
+index 0000000..23f4ad8
+--- /dev/null
++++ b/test/models/notification/digest_window_test.rb
+@@ -0,0 +1,182 @@
++require "test_helper"
++
++class Notification::DigestWindowTest < ActiveSupport::TestCase
++  include ActionMailer::TestHelper
++
++  setup do
++    @user = users(:david)
++    @user.settings.update!(bundle_email_frequency: "every_few_hours")
++  end
++
++  test "first notification opens a window whose clock starts immediately" do
++    started_at = Time.current.change(usec: 0)
++
++    travel_to started_at do
++      notification = create_notification(cards(:layout), events(:layout_commented))
++      window = notification.reload.digest_window
++
++      assert_equal started_at, window.started_at
++      assert_equal started_at + 4.hours, window.ends_at
++      assert_equal @user.id, window.open_user_id
++    end
++  end
++
++  test "each person gets a window based on their own frequency" do
++    other_user = users(:jz)
++    other_user.settings.update!(bundle_email_frequency: "daily")
++
++    notification = create_notification(cards(:layout), events(:layout_commented))
++    other_notification = Notification.create!(
++      user: other_user, source: events(:layout_commented), creator: users(:kevin)
++    )
++
++    assert_equal 4.hours, notification.digest_window.ends_at - notification.digest_window.started_at
++    assert_equal 1.day, other_notification.digest_window.ends_at - other_notification.digest_window.started_at
++    assert_not_equal notification.digest_window, other_notification.digest_window
++  end
++
++  test "daily and weekly frequencies determine the window duration" do
++    [ [ "daily", 1.day, cards(:layout), events(:layout_commented) ],
++      [ "weekly", 1.week, cards(:buy_domain), events(:buy_domain_sent_back_to_triage) ] ].each do |frequency, duration, card, source|
++      @user.settings.update!(bundle_email_frequency: frequency)
++      notification = create_notification(card, source)
++      window = notification.reload.digest_window
++
++      assert_equal duration, window.ends_at - window.started_at
++      window.update!(open_user_id: nil)
++    end
++  end
++
++  test "source updates after delivery open a new digest window" do
++    notification = create_notification(cards(:layout), events(:layout_commented))
++    first_window = notification.reload.digest_window
++
++    travel_to first_window.ends_at + 1.second do
++      first_window.send_now
++      notification.update!(source: events(:layout_published))
++    end
++
++    assert_not_equal first_window, notification.reload.digest_window
++    assert_equal 1, @user.notification_digest_windows.pending.count
++  end
++
++  test "opening a window schedules one delivery job" do
++    assert_enqueued_with(job: Notification::DigestWindow::DeliveryJob) do
++      create_notification(cards(:layout), events(:layout_commented))
++    end
++  end
++
++  test "notifications within a window share its original deadline" do
++    first_notification = create_notification(cards(:layout), events(:layout_commented))
++    window = first_notification.digest_window
++    deadline = window.ends_at
++
++    travel_to 2.hours.from_now do
++      second_notification = create_notification(cards(:buy_domain), events(:buy_domain_sent_back_to_triage))
++
++      assert_equal window, second_notification.reload.digest_window
++      assert_equal deadline, window.reload.ends_at
++      assert_equal 2, window.notifications.count
++    end
++  end
++
++  test "late notifications join the window that is still open" do
++    first_notification = create_notification(cards(:layout), events(:layout_commented))
++    window = first_notification.digest_window
++
++    travel_to window.ends_at + 1.minute do
++      late_notification = create_notification(cards(:buy_domain), events(:buy_domain_sent_back_to_triage))
++
++      assert_equal window, late_notification.reload.digest_window
++      assert_equal 1, @user.notification_digest_windows.pending.count
++      assert_equal 2, window.notifications.count
++    end
++  end
++
++  test "early delivery reschedules while keeping the window open" do
++    notification = create_notification(cards(:layout), events(:layout_commented))
++    window = notification.digest_window
++
++    travel_to window.started_at + 1.hour do
++      assert_enqueued_with(job: Notification::DigestWindow::DeliveryJob) do
++        window.send_now
++      end
++    end
++
++    assert window.reload.open?
++    assert_nil window.sent_at
++  end
++
++  test "sending closes one window before the next one opens and cannot send it twice" do
++    notification = create_notification(cards(:layout), events(:layout_commented))
++    second_notification = create_notification(cards(:buy_domain), events(:buy_domain_sent_back_to_triage))
++    window = notification.digest_window
++
++    assert_equal window, second_notification.digest_window
++
++    travel_to window.ends_at + 1.second do
++      assert_emails 1 do
++        window.send_now
++        window.send_now
++      end
++    end
++
++    email = ActionMailer::Base.deliveries.last
++    assert_match cards(:layout).title, email.body.encoded
++    assert_match cards(:buy_domain).title, email.body.encoded
++    assert_not_nil window.reload.sent_at
++    assert_nil window.open_user_id
++
++    travel_to window.ends_at + 1.minute do
++      next_notification = create_notification(cards(:text), events(:text_published))
++      next_window = next_notification.reload.digest_window
++
++      assert_not_equal window, next_window
++      assert_operator next_window.started_at, :>=, window.ends_at
++      assert_equal 1, @user.notification_digest_windows.pending.count
++    end
++  end
++
++  test "turning email off closes an open window without sending" do
++    notification = create_notification(cards(:layout), events(:layout_commented))
++    window = notification.reload.digest_window
++
++    @user.settings.update!(bundle_email_frequency: "never")
++
++    assert_not window.reload.open?
++    assert_empty @user.notification_digest_windows.pending
++
++    travel_to window.ends_at + 1.minute do
++      assert_no_emails do
++        window.send_now
++      end
++    end
++  end
++
++  test "re-enabling email starts a new window after the cancelled window closes" do
++    notification = create_notification(cards(:layout), events(:layout_commented))
++    cancelled_window = notification.reload.digest_window
++
++    @user.settings.update!(bundle_email_frequency: "never")
++    @user.settings.update!(bundle_email_frequency: "weekly")
++    next_notification = create_notification(cards(:buy_domain), events(:buy_domain_sent_back_to_triage))
++    next_window = next_notification.reload.digest_window
++
++    assert_operator next_window.started_at, :>=, cancelled_window.reload.ends_at
++    assert_equal 1, @user.notification_digest_windows.pending.count
++  end
++
++  test "never does not open a window" do
++    @user.settings.update!(bundle_email_frequency: "never")
++
++    notification = create_notification(cards(:layout), events(:layout_commented))
++
++    assert_nil notification.reload.digest_window
++    assert_empty @user.notification_digest_windows
++  end
++
++  private
++    def create_notification(card, source)
++      Notification.create!(user: @user, card: card, source: source, creator: users(:kevin))
++    end
++end
+diff --git a/test/models/user/settings_test.rb b/test/models/user/settings_test.rb
+new file mode 100644
+index 0000000..85223bf
+--- /dev/null
++++ b/test/models/user/settings_test.rb
+@@ -0,0 +1,25 @@
++require "test_helper"
++
++class User::SettingsTest < ActiveSupport::TestCase
++  test "bundle email frequency supports the available choices" do
++    settings = user_settings(:david_settings)
++
++    %w[never every_few_hours daily weekly].each do |frequency|
++      assert settings.update(bundle_email_frequency: frequency), "#{frequency} should be valid"
++      assert_equal frequency, settings.bundle_email_frequency
++    end
++  end
++
++  test "bundle email frequency defaults to never" do
++    settings = User::Settings.create!(user: users(:mike))
++
++    assert_equal "never", settings.bundle_email_frequency
++  end
++
++  test "bundle email frequency rejects unknown choices" do
++    settings = user_settings(:david_settings)
++
++    assert_not settings.update(bundle_email_frequency: "monthly")
++    assert_includes settings.errors[:bundle_email_frequency], "is not included in the list"
++  end
++end

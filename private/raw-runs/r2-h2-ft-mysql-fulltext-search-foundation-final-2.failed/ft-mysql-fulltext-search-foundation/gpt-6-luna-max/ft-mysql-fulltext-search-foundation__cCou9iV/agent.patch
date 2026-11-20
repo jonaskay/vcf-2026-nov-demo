@@ -1,0 +1,195 @@
+diff --git a/app/controllers/searches_controller.rb b/app/controllers/searches_controller.rb
+new file mode 100644
+index 0000000..1da33d7
+--- /dev/null
++++ b/app/controllers/searches_controller.rb
+@@ -0,0 +1,32 @@
++class SearchesController < ApplicationController
++  def show
++    @query = params[:q].to_s.strip
++    @matching_comments_by_card_id = {}
++
++    if @query.present?
++      @page = set_page_and_extract_portion_from search_results
++      @matching_comments_by_card_id = matching_comments_for(@page.records)
++    end
++  end
++
++  private
++    def search_results
++      Current.user.accessible_cards.published
++        .matching_text(@query)
++        .reverse_chronologically
++        .preload(:board)
++        .with_rich_text_description
++    end
++
++    def matching_comments_for(cards)
++      if cards.any?
++        Current.user.accessible_comments
++          .matching_text(@query)
++          .where(card_id: cards.map(&:id))
++          .includes(:rich_text_body)
++          .group_by(&:card_id)
++      else
++        {}
++      end
++    end
++end
+diff --git a/app/helpers/searches_helper.rb b/app/helpers/searches_helper.rb
+new file mode 100644
+index 0000000..f3b788c
+--- /dev/null
++++ b/app/helpers/searches_helper.rb
+@@ -0,0 +1,8 @@
++module SearchesHelper
++  def highlight_search_excerpt(content, query)
++    text = content.respond_to?(:to_plain_text) ? content.to_plain_text : content.to_s
++    snippet = excerpt(text, query, radius: 90)
++
++    highlight(snippet, query) if snippet
++  end
++end
+diff --git a/app/models/card.rb b/app/models/card.rb
+index b3eac96..db9d903 100644
+--- a/app/models/card.rb
++++ b/app/models/card.rb
+@@ -47,6 +47,32 @@ class Card < ApplicationRecord
+     end
+   end
+ 
++
++  scope :matching_text, ->(term) do
++    pattern = "%#{ActiveRecord::Base.sanitize_sql_like(term, "!")}%"
++
++    where(<<~SQL.squish, pattern: pattern)
++      cards.title LIKE :pattern ESCAPE '!'
++      OR EXISTS (
++        SELECT 1
++        FROM action_text_rich_texts AS card_descriptions
++        WHERE card_descriptions.record_type = 'Card'
++          AND card_descriptions.record_id = cards.id
++          AND card_descriptions.name = 'description'
++          AND card_descriptions.body LIKE :pattern ESCAPE '!'
++      )
++      OR EXISTS (
++        SELECT 1
++        FROM comments
++        INNER JOIN action_text_rich_texts AS comment_bodies
++          ON comment_bodies.record_type = 'Comment'
++          AND comment_bodies.record_id = comments.id
++          AND comment_bodies.name = 'body'
++        WHERE comments.card_id = cards.id
++          AND comment_bodies.body LIKE :pattern ESCAPE '!'
++      )
++    SQL
++  end
+   def card
+     self
+   end
+diff --git a/app/models/comment.rb b/app/models/comment.rb
+index f27f764..576b6a9 100644
+--- a/app/models/comment.rb
++++ b/app/models/comment.rb
+@@ -12,6 +12,11 @@ class Comment < ApplicationRecord
+ 
+   scope :chronologically, -> { order created_at: :asc, id: :desc }
+   scope :preloaded, -> { with_rich_text_body.includes(reactions: :reacter) }
++  scope :matching_text, ->(term) do
++    pattern = "%#{ActiveRecord::Base.sanitize_sql_like(term, "!")}%"
++    joins(:rich_text_body).where("action_text_rich_texts.body LIKE ? ESCAPE '!'", pattern)
++  end
++
+   scope :by_system, -> { joins(:creator).where(creator: { role: :system }) }
+   scope :by_user, -> { joins(:creator).where.not(creator: { role: :system }) }
+ 
+diff --git a/app/views/searches/show.html.erb b/app/views/searches/show.html.erb
+new file mode 100644
+index 0000000..3fb31b0
+--- /dev/null
++++ b/app/views/searches/show.html.erb
+@@ -0,0 +1,50 @@
++<% @page_title = "Search" %>
++
++<% content_for :header do %>
++  <h1 class="header__title" data-bridge--title-target="header"><%= @page_title %></h1>
++<% end %>
++
++<section class="panel panel--wide shadow center margin-block-start">
++  <%= form_with url: search_path, method: :get, class: "flex align-end gap-half" do %>
++    <div class="flex flex-column gap-half flex-item-grow">
++      <%= label_tag :q, "Search card titles, descriptions, and comments" %>
++      <%= search_field_tag :q, @query, class: "input", autofocus: true, autocomplete: "off" %>
++    </div>
++    <%= submit_tag "Search", class: "btn" %>
++  <% end %>
++</section>
++
++<% if @query.present? %>
++  <% if @page.records.any? %>
++    <section class="panel panel--wide shadow center margin-block-start" aria-label="Search results">
++      <h2 class="txt-normal">Results for “<%= @query %>”</h2>
++
++      <%= with_automatic_pagination :search_results, @page do %>
++        <ol id="search-results" class="flex flex-column gap pad-inline-start">
++          <% @page.records.each do |card| %>
++            <li id="<%= dom_id(card, :search_result) %>">
++              <article>
++                <h3 class="txt-normal margin-none">
++                  <%= link_to highlight(card.title, @query), card_path(card) %>
++                </h3>
++                <p class="txt-small txt-subtle margin-none">In <%= link_to card.board.name, board_path(card.board) %></p>
++
++                <% if snippet = highlight_search_excerpt(card.description, @query) %>
++                  <p><%= snippet %></p>
++                <% end %>
++
++                <% @matching_comments_by_card_id.fetch(card.id, []).each do |comment| %>
++                  <% if snippet = highlight_search_excerpt(comment.body, @query) %>
++                    <blockquote class="txt-small"><%= snippet %></blockquote>
++                  <% end %>
++                <% end %>
++              </article>
++            </li>
++          <% end %>
++        </ol>
++      <% end %>
++    </section>
++  <% else %>
++    <p class="blank-slate center margin-block-start">No cards found for “<%= @query %>”</p>
++  <% end %>
++<% end %>
+diff --git a/config/routes.rb b/config/routes.rb
+index d4f168c..b286c77 100644
+--- a/config/routes.rb
++++ b/config/routes.rb
+@@ -108,6 +108,8 @@ Rails.application.routes.draw do
+   end
+ 
+   resources :tags, only: :index
++  resource :search, only: :show
++
+ 
+   namespace :notifications do
+     resource :settings
+diff --git a/test/controllers/searches_controller_test.rb b/test/controllers/searches_controller_test.rb
+new file mode 100644
+index 0000000..dca7e02
+--- /dev/null
++++ b/test/controllers/searches_controller_test.rb
+@@ -0,0 +1,15 @@
++require "test_helper"
++
++class SearchesControllerTest < ActionDispatch::IntegrationTest
++  setup do
++    sign_in_as :kevin
++  end
++
++  test "searches published cards by title and highlights the match" do
++    get search_path, params: { q: "logo" }
++
++    assert_response :success
++    assert_select "mark", text: "logo"
++    assert_select "a[href=?]", card_path(cards(:logo))
++  end
++end

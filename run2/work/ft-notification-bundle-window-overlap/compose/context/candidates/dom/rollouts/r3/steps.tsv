@@ -1,0 +1,3 @@
+1			
+2			
+3	2026-11-16T22:49:15Z	0	pwd && ls -la && find . -maxdepth 2 -type f | sort | sed -n '1,200p'

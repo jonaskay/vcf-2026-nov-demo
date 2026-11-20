@@ -1,0 +1,2 @@
+OK /Users/jk/dev/vcf-nov-2026-talk/demo/run2/work/ft-notification-bundle-window-overlap/dom/context/harness
+single-component: OK (skills/new-model-job-mailer and its trigger line in system.md)

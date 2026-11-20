@@ -1,0 +1,34 @@
+<notes>
+I changed one component: `system.md`. I replaced the generic "analyze / reproduce script / fix / verify / edge cases" workflow with a workflow tied to the clock, and added a short "Workspace facts" section. The pattern comes from the adopted library harness `ft-notification-bundle-window-overlap`. I copied it and re-checked every fact against this task's runs. I dropped its flaky-test fact because nothing here shows it, and added facts that these runs did show. The other three always-on files and the skills are untouched.
+
+**What the runs show**
+- **The divergence: r2 did not stop once its change worked.**
+  - r1 and r3 ran the full suite, reviewed the diff and submitted, at 31 and 41 minutes (r1 steps 63–69, r3 steps 61–64).
+  - r2 had passing focused tests and rubocop at step 75 (about 53 min) and a green full suite at step 83 (1542 runs, about 67 min).
+  - It then kept going: it changed `system_commenter.rb` (step 85 onward), ran more benchmarks (steps 101–103, 112) and redesigned twice (steps 97–110). It hit the time limit at 91 min with 112 steps.
+  - New rule 7 says that a reviewed diff with the focused tests and full suite passing is "done", and that the agent should then submit and not open new scope.
+- **r2's benchmarks timed out and it retried at nearly the same scale.**
+  - Step 79 seeded 100k rows and was killed with exit 124 after 300 s.
+  - Step 81 re-ran the same script at 10k rows and was killed again after 300 s.
+  - That cost 10 minutes and taught it nothing; step 82 then ran a simpler script quickly.
+  - New rule 3 covers this tool error. Benchmarks start at about 10k rows with `timeout 120`. Exit 124 means the command was killed, not that it failed. The fallback is to cut the data 10x or drop the slow part; after a second 124, stop benchmarking and rely on query plans and tests.
+- **r2 explored for a long time before writing anything.** Its first repository write was at step 51 (about 44 min), compared with step 26 in r1 and step 30 in r3. Steps 36–45 were temporary-index experiments, and the gap between steps 46 and 47 was 9 minutes of thinking. Rule 2 adds a stop condition for exploration and a target of a first write by about minute 25.
+
+**Workspace facts (each seen in repository output)**
+- **`rg` is missing:** r2 step 4 printed "bash: line 1: rg: command not found" (exit 127). r1 step 4 and r3 step 4 also got exit 127.
+- **No Python:** this comes from the task environment description. r2 step 51 tried `python3` and then switched to `ruby` at step 52.
+- **Test commands and timing:**
+  - The full suite, `RAILS_ENV=test bin/rails test`, ran 1542 tests in 19.6 s (r2 step 83).
+  - Focused runs used the same command with a test file path (r2 steps 70 and 75).
+- **Multi-database rollback:**
+  - Plain `db:rollback` aborted at r2 step 66 ("You're using a multiple database application… db:rollback:primary").
+  - Rolling back a migration after editing it failed at r2 step 68 ("No indexes found on cards with the options provided").
+  - r2 then fixed the index by hand at step 69.
+- **Schema dumps:**
+  - After `db:migrate` (r2 step 59), the `git diff --stat` at r2 step 61 lists `db/schema_sqlite.rb` and `db/cable_schema.rb` but not `db/schema.rb`. The `cable_schema.rb` diff is charset/limit noise.
+  - r2 step 64 and r1 step 56 both ran `git checkout -- db/cable_schema.rb` and edited `db/schema.rb` by hand.
+
+**What I left alone**
+- I added no skill: the failures here are about sequencing and stopping, and they apply to every run.
+- I added nothing about which fix to make, such as an index or the query shape. That belongs to the parallel candidate.
+</notes>

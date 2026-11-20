@@ -1,0 +1,333 @@
+diff --git a/app/controllers/searches_controller.rb b/app/controllers/searches_controller.rb
+new file mode 100644
+index 0000000..1f5bb5d
+--- /dev/null
++++ b/app/controllers/searches_controller.rb
+@@ -0,0 +1,30 @@
++class SearchesController < ApplicationController
++  def show
++    @query = params[:q].to_s.strip
++    cards = Current.user.accessible_cards.published.search(@query)
++      .reverse_chronologically
++      .preload(:board, :rich_text_description)
++
++    set_page_and_extract_portion_from cards
++    @comments_by_card_id = matching_comments
++  end
++
++  private
++    def matching_comments
++      card_ids = @page.records.map(&:id)
++      if @query.present? && card_ids.any?
++        search_patterns = Card.search_patterns_for(@query)
++        body_condition = search_patterns.map { "action_text_rich_texts.body LIKE ? ESCAPE '!'" }.join(" OR ")
++
++        Current.user.accessible_comments
++          .joins(:rich_text_body)
++          .where(card_id: card_ids)
++          .where(body_condition, *search_patterns)
++          .preload(:rich_text_body)
++          .select { |comment| Card.searchable_text_matches?(comment.body, @query) }
++          .group_by(&:card_id)
++      else
++        {}
++      end
++    end
++end
+diff --git a/app/helpers/searches_helper.rb b/app/helpers/searches_helper.rb
+new file mode 100644
+index 0000000..10b4efd
+--- /dev/null
++++ b/app/helpers/searches_helper.rb
+@@ -0,0 +1,14 @@
++module SearchesHelper
++  def search_excerpt(content, query)
++    if content.present?
++      text = content.respond_to?(:to_plain_text) ? content.to_plain_text : content.to_s
++      excerpted_text = excerpt(text, query, radius: 100)
++      highlight_search_text(excerpted_text, query) if excerpted_text
++    end
++  end
++
++  def highlight_search_text(text, query)
++    # Escape first so literal HTML-like text can still be highlighted safely.
++    highlight(ERB::Util.html_escape(text), ERB::Util.html_escape(query).to_s, sanitize: false)
++  end
++end
+diff --git a/app/models/card.rb b/app/models/card.rb
+index b3eac96..c9a1e09 100644
+--- a/app/models/card.rb
++++ b/app/models/card.rb
+@@ -47,6 +47,54 @@ class Card < ApplicationRecord
+     end
+   end
+ 
++  scope :search, ->(query) do
++    if query.present?
++      search_query = query.to_s
++      search_patterns = Card.search_patterns_for(search_query)
++      body_condition = search_patterns.map { "action_text_rich_texts.body LIKE ? ESCAPE '!'" }.join(" OR ")
++      searchable_card_ids = select(:id)
++
++      # Rich-text bodies are HTML, so only count SQL candidates that match their visible plain text.
++
++      matching_description_ids = ActionText::RichText
++        .where(record_type: "Card", record_id: searchable_card_ids, name: "description")
++        .where(body_condition, *search_patterns)
++        .select { |rich_text| Card.searchable_text_matches?(rich_text.body, search_query) }
++        .map(&:record_id)
++
++      matching_comment_card_ids = Comment
++        .joins(:rich_text_body)
++        .where(card_id: searchable_card_ids)
++        .where(body_condition, *search_patterns)
++        .preload(:rich_text_body)
++        .select { |comment| Card.searchable_text_matches?(comment.body, search_query) }
++        .map(&:card_id)
++
++      title_pattern = search_patterns.first
++      title_matches = where("cards.title LIKE ? ESCAPE '!'", title_pattern)
++      content_matches = where(id: (matching_description_ids + matching_comment_card_ids).uniq)
++
++      where(id: title_matches.select(:id)).or(content_matches)
++    else
++      none
++    end
++  end
++
++  def self.search_patterns_for(query)
++    [ query, ERB::Util.html_escape(query).to_s ].uniq.flat_map do |pattern|
++      escaped_pattern = ActiveRecord::Base.sanitize_sql_like(pattern, "!")
++      # A visible word may be split by HTML tags inside rich text.
++      interleaved_pattern = pattern.each_char.map { |character| ActiveRecord::Base.sanitize_sql_like(character, "!") }.join("%")
++
++      [ "%#{escaped_pattern}%", "%#{interleaved_pattern}%" ]
++    end.uniq
++  end
++
++  def self.searchable_text_matches?(content, query)
++    text = content.respond_to?(:to_plain_text) ? content.to_plain_text : content.to_s
++    text.downcase.include?(query.downcase)
++  end
++
+   def card
+     self
+   end
+diff --git a/app/views/my/menus/_jump.html.erb b/app/views/my/menus/_jump.html.erb
+index cc10007..e432ef6 100644
+--- a/app/views/my/menus/_jump.html.erb
++++ b/app/views/my/menus/_jump.html.erb
+@@ -20,6 +20,7 @@
+ <div class="nav__scroll-container">
+   <div class="nav__hotkeys margin-block-end-half" role="list">
+     <%= filter_hotkey_link "Home", root_path, 1, "home" %>
++    <%= filter_hotkey_link "Search cards", search_path, 4, "search" %>
+     <%= filter_hotkey_link "Assigned to me", cards_path(assignee_ids: [Current.user.id]), 2, "clipboard" %>
+     <%= filter_hotkey_link "Added by me", cards_path(creator_ids: [Current.user.id]), 3, "person-add" %>
+   </div>
+diff --git a/app/views/searches/show.html.erb b/app/views/searches/show.html.erb
+new file mode 100644
+index 0000000..9b1fe84
+--- /dev/null
++++ b/app/views/searches/show.html.erb
+@@ -0,0 +1,40 @@
++<% @page_title = "Search" %>
++<% turbo_exempts_page_from_cache %>
++
++<% content_for :header do %>
++  <h1 class="header__title divider divider--fade full-width" data-bridge--title-target="header">Search</h1>
++<% end %>
++
++<section class="search-results">
++  <%= form_with url: search_path, method: :get, class: "flex align-center gap" do |form| %>
++    <%= form.label :q, "Search cards", class: "for-screen-reader" %>
++    <%= form.search_field :q, value: @query, class: "input", autofocus: true %>
++    <%= form.submit "Search", class: "btn" %>
++  <% end %>
++
++  <% if @query.present? %>
++    <div class="search-results__list">
++      <%= with_automatic_pagination :search_results, @page do %>
++        <% @page.records.each do |card| %>
++          <%= tag.article class: "search-result pad-block", data: { card_number: card.number } do %>
++            <h2><%= link_to highlight_search_text(card.title, @query), card_path(card) %></h2>
++            <p><%= card.board.name %></p>
++
++            <% if excerpt = search_excerpt(card.description, @query) %>
++              <p class="search-result__excerpt"><%= excerpt %></p>
++            <% end %>
++
++            <% @comments_by_card_id.fetch(card.id, []).each do |comment| %>
++              <% if excerpt = search_excerpt(comment.body, @query) %>
++                <p class="search-result__excerpt"><%= excerpt %></p>
++              <% end %>
++            <% end %>
++          <% end %>
++        <% end %>
++      <% end %>
++      <% if @page.empty? %>
++        <div class="blank-slate">No cards match this search</div>
++      <% end %>
++    </div>
++  <% end %>
++</section>
+diff --git a/config/routes.rb b/config/routes.rb
+index d4f168c..a5b61b8 100644
+--- a/config/routes.rb
++++ b/config/routes.rb
+@@ -108,6 +108,7 @@ Rails.application.routes.draw do
+   end
+ 
+   resources :tags, only: :index
++  resource :search, only: :show
+ 
+   namespace :notifications do
+     resource :settings
+diff --git a/test/controllers/searches_controller_test.rb b/test/controllers/searches_controller_test.rb
+new file mode 100644
+index 0000000..1412436
+--- /dev/null
++++ b/test/controllers/searches_controller_test.rb
+@@ -0,0 +1,142 @@
++require "test_helper"
++
++class SearchesControllerTest < ActionDispatch::IntegrationTest
++  setup do
++    sign_in_as :kevin
++  end
++
++  test "show searches card titles and highlights matches" do
++    get search_path, params: { q: "logo" }
++
++    assert_response :success
++    result_link = css_select(".search-result[data-card-number='#{cards(:logo).number}'] h2 a").first
++    assert_equal "The <mark>logo</mark> isn't big enough", result_link.inner_html
++  end
++
++  test "show searches descriptions and comment bodies" do
++    card = cards(:layout)
++    card.update! description: "A descriptionneedle inside the description."
++    comments(:layout_overflowing_david).update! body: "<p>A <strong>commentneedle</strong> inside the comment.</p>"
++
++    get search_path, params: { q: "descriptionneedle" }
++    assert_response :success
++    assert_select ".search-result[data-card-number='#{card.number}'] .search-result__excerpt mark", text: "descriptionneedle"
++
++    get search_path, params: { q: "commentneedle" }
++    assert_response :success
++    assert_select ".search-result[data-card-number='#{card.number}'] .search-result__excerpt mark", text: "commentneedle"
++
++    get search_path, params: { q: "strong" }
++    assert_response :success
++    assert_select ".search-result", count: 0
++  end
++
++  test "show searches visible rich text instead of HTML markup and escapes excerpts" do
++    card = cards(:layout)
++    card.update! description: '<p>Readable <strong>emphasis</strong> with a <a href="https://example.test">link</a> and <span>super<em>sensitive</em></span> &lt;script&gt; text.</p>'
++
++    get search_path, params: { q: "strong" }
++    assert_response :success
++    assert_select ".search-result", count: 0
++
++    get search_path, params: { q: "href" }
++    assert_response :success
++    assert_select ".search-result", count: 0
++
++    get search_path, params: { q: "supersensitive" }
++    assert_response :success
++    assert_select ".search-result[data-card-number='#{card.number}'] .search-result__excerpt mark", text: "supersensitive"
++
++    get search_path, params: { q: "<script>" }
++    assert_response :success
++    assert_select ".search-result[data-card-number='#{card.number}'] .search-result__excerpt mark", text: "<script>" do |elements|
++      assert_equal "&lt;script&gt;", elements.first.inner_html
++    end
++  end
++
++  test "show returns results newest first, with id as a tie breaker" do
++    timestamp = 2.days.ago.change(usec: 0)
++    cards(:logo).update_columns(title: "Shared search phrase", created_at: timestamp)
++    cards(:layout).update_columns(title: "Shared search phrase", created_at: timestamp)
++    cards(:shipping).update_columns(title: "Shared search phrase", created_at: timestamp + 1.day)
++
++    get search_path, params: { q: "Shared search phrase" }
++
++    assert_response :success
++    result_numbers = css_select(".search-result").map { |element| element["data-card-number"] }
++    expected_numbers = [ cards(:shipping), cards(:logo), cards(:layout) ]
++      .sort_by { |card| [ card.created_at, card.id ] }
++      .reverse
++      .map { |card| card.number.to_s }
++    assert_equal expected_numbers, result_numbers
++  end
++
++  test "show does not search blank queries" do
++    get search_path, params: { q: "   " }
++
++    assert_response :success
++    assert_select "form[action='#{search_path}'][method='get']"
++    assert_select ".search-result", count: 0
++  end
++
++  test "show treats percent and underscore as literal characters" do
++    cards(:logo).update_column :title, "Literal 100% result"
++    cards(:layout).update_column :title, "Literal 100x result"
++
++    get search_path, params: { q: "%" }
++    assert_response :success
++    assert_select ".search-result[data-card-number='#{cards(:logo).number}']"
++    assert_select ".search-result[data-card-number='#{cards(:layout).number}']", count: 0
++
++    cards(:logo).update_column :title, "Literal one_result"
++    cards(:layout).update_column :title, "Literal oneXresult"
++    get search_path, params: { q: "_" }
++    assert_response :success
++    assert_select ".search-result[data-card-number='#{cards(:logo).number}']"
++    assert_select ".search-result[data-card-number='#{cards(:layout).number}']", count: 0
++  end
++
++  test "show only returns currently accessible published cards and their comments" do
++    private_card = create_published_card(boards(:private), "privateonlyphrase")
++    draft = boards(:writebook).cards.create!(creator: users(:kevin), status: "drafted", title: "drafttitlephrase")
++
++    with_current_user(:kevin) do
++      draft_comment = Comment.new(card: draft, creator: users(:kevin), account: accounts("37s"))
++      draft_comment.save!(validate: false)
++      ActionText::RichText.create!(record: draft_comment, name: "body", account: accounts("37s"), body: "draftcommentphrase")
++    end
++
++    get search_path, params: { q: "privateonlyphrase" }
++    assert_response :success
++    assert_select ".search-result[data-card-number='#{private_card.number}']"
++
++    get search_path, params: { q: "radio" }
++    assert_response :success
++    assert_select ".search-result", count: 0
++
++    boards(:private).accesses.revoke_from users(:kevin)
++    get search_path, params: { q: "privateonlyphrase" }
++    assert_response :success
++    assert_select ".search-result[data-card-number='#{private_card.number}']", count: 0
++
++    get search_path, params: { q: "drafttitlephrase" }
++    assert_response :success
++    assert_select ".search-result", count: 0
++
++    get search_path, params: { q: "draftcommentphrase" }
++    assert_response :success
++    assert_select ".search-result", count: 0
++
++    logout_and_sign_in_as :jz
++    get search_path, params: { q: "privateonlyphrase" }
++    assert_response :success
++    assert_select ".search-result", count: 0
++  end
++
++  private
++    def create_published_card(board, title)
++      with_current_user(:kevin) do
++        board.cards.create!(creator: users(:kevin), title: title, status: "published")
++      end
++    end
++end

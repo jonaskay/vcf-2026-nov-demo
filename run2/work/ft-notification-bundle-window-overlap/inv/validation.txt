@@ -1,0 +1,2 @@
+OK /Users/jk/dev/vcf-nov-2026-talk/demo/run2/work/ft-notification-bundle-window-overlap/inv/context/harness
+single-component: OK (system.md)

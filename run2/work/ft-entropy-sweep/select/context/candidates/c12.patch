@@ -1,0 +1,122 @@
+diff --git a/app/models/card/entropic.rb b/app/models/card/entropic.rb
+index ebaad78..a0c74ca 100644
+--- a/app/models/card/entropic.rb
++++ b/app/models/card/entropic.rb
+@@ -3,11 +3,17 @@ module Card::Entropic
+ 
+   included do
+     scope :due_to_be_postponed, -> do
++      now = Time.now
++      minimum_period = Entropy::AUTO_POSTPONE_PERIODS_IN_SECONDS.min
++
++      # Every configured entropy period is at least this long, so this range
++      # only excludes cards that cannot be due.
+       active
+         .joins(board: :account)
+         .left_outer_joins(board: :entropy)
+         .joins("LEFT OUTER JOIN entropies AS account_entropies ON account_entropies.account_id = accounts.id AND account_entropies.container_type = 'Account' AND account_entropies.container_id = accounts.id")
+-        .where("last_active_at <= #{connection.date_subtract('?', 'COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period)')}", Time.now)
++        .where("cards.last_active_at <= ?", now - minimum_period)
++        .where("last_active_at <= #{connection.date_subtract('?', 'COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period)')}", now)
+     end
+ 
+     scope :postponing_soon, -> do
+diff --git a/config/brakeman.ignore b/config/brakeman.ignore
+index 25441a6..1bdd0dc 100644
+--- a/config/brakeman.ignore
++++ b/config/brakeman.ignore
+@@ -118,13 +118,13 @@
+     {
+       "warning_type": "SQL Injection",
+       "warning_code": 0,
+-      "fingerprint": "bbd8fe3cbbc6b393df770d3142d6fa46e2b9441b21f48a52175211acaae4efad",
++      "fingerprint": "7c842b66d5f066e65c7689b48846751b5fb1c9bbbd54f00fd4c8829527be7478",
+       "check_name": "SQL",
+       "message": "Possible SQL injection",
+       "file": "app/models/card/entropic.rb",
+-      "line": 10,
++      "line": 14,
+       "link": "https://brakemanscanner.org/docs/warning_types/sql_injection/",
+-      "code": "active.joins(:board => :account).left_outer_joins(:board => :entropy).joins(\"LEFT OUTER JOIN entropies AS account_entropies ON account_entropies.account_id = accounts.id AND account_entropies.container_type = 'Account' AND account_entropies.container_id = accounts.id\").where(\"last_active_at <= #{connection.date_subtract(\"?\", \"COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period)\")}\", Time.now)",
++      "code": "active.joins(:board => :account).left_outer_joins(:board => :entropy).joins(\"LEFT OUTER JOIN entropies AS account_entropies ON account_entropies.account_id = accounts.id AND account_entropies.container_type = 'Account' AND account_entropies.container_id = accounts.id\").where(\"cards.last_active_at <= ?\", (Time.now - Entropy::AUTO_POSTPONE_PERIODS_IN_SECONDS.min)).where(\"last_active_at <= #{connection.date_subtract(\"?\", \"COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period)\")}\", Time.now)",
+       "render_path": null,
+       "location": {
+         "type": "method",
+diff --git a/db/migrate/20260218120001_add_status_and_last_active_at_index_to_cards.rb b/db/migrate/20260218120001_add_status_and_last_active_at_index_to_cards.rb
+new file mode 100644
+index 0000000..46385a2
+--- /dev/null
++++ b/db/migrate/20260218120001_add_status_and_last_active_at_index_to_cards.rb
+@@ -0,0 +1,5 @@
++class AddStatusAndLastActiveAtIndexToCards < ActiveRecord::Migration[8.2]
++  def change
++    add_index :cards, [:status, :last_active_at]
++  end
++end
+diff --git a/db/schema.rb b/db/schema.rb
+index 99e6be9..82d3313 100644
+--- a/db/schema.rb
++++ b/db/schema.rb
+@@ -10,7 +10,7 @@
+ #
+ # It's strongly recommended that you check this file into your version control system.
+ 
+-ActiveRecord::Schema[8.2].define(version: 2026_02_18_120000) do
++ActiveRecord::Schema[8.2].define(version: 2026_02_18_120001) do
+   create_table "accesses", id: :uuid, charset: "utf8mb4", collation: "utf8mb4_0900_ai_ci", force: :cascade do |t|
+     t.datetime "accessed_at"
+     t.uuid "account_id", null: false
+@@ -231,6 +231,7 @@ ActiveRecord::Schema[8.2].define(version: 2026_02_18_120000) do
+     t.index ["account_id", "number"], name: "index_cards_on_account_id_and_number", unique: true
+     t.index ["board_id"], name: "index_cards_on_board_id"
+     t.index ["column_id"], name: "index_cards_on_column_id"
++    t.index ["status", "last_active_at"], name: "index_cards_on_status_and_last_active_at"
+   end
+ 
+   create_table "closers_filters", id: false, charset: "utf8mb4", collation: "utf8mb4_0900_ai_ci", force: :cascade do |t|
+diff --git a/db/schema_sqlite.rb b/db/schema_sqlite.rb
+index 00125d1..1bf4aa8 100644
+--- a/db/schema_sqlite.rb
++++ b/db/schema_sqlite.rb
+@@ -10,7 +10,7 @@
+ #
+ # It's strongly recommended that you check this file into your version control system.
+ 
+-ActiveRecord::Schema[8.2].define(version: 2026_02_18_120000) do
++ActiveRecord::Schema[8.2].define(version: 2026_02_18_120001) do
+   create_table "accesses", id: :uuid, force: :cascade do |t|
+     t.datetime "accessed_at"
+     t.uuid "account_id", null: false
+@@ -231,6 +231,7 @@ ActiveRecord::Schema[8.2].define(version: 2026_02_18_120000) do
+     t.index ["account_id", "number"], name: "index_cards_on_account_id_and_number", unique: true
+     t.index ["board_id"], name: "index_cards_on_board_id"
+     t.index ["column_id"], name: "index_cards_on_column_id"
++    t.index ["status", "last_active_at"], name: "index_cards_on_status_and_last_active_at"
+   end
+ 
+   create_table "closers_filters", id: false, force: :cascade do |t|
+diff --git a/test/models/card/entropic_test.rb b/test/models/card/entropic_test.rb
+index 848cfa7..42da599 100644
+--- a/test/models/card/entropic_test.rb
++++ b/test/models/card/entropic_test.rb
+@@ -32,6 +32,20 @@ class Card::EntropicTest < ActiveSupport::TestCase
+     assert_equal original_period, account_entropy.reload.auto_postpone_period
+   end
+ 
++  test "due scope includes the entropy boundary with account fallback" do
++    freeze_time
++
++    entropies(:writebook_board).destroy
++    minimum_period = Entropy::AUTO_POSTPONE_PERIODS_IN_SECONDS.min
++    entropies("37s_account").update! auto_postpone_period: minimum_period
++
++    cards(:logo).update! last_active_at: Time.now - minimum_period
++    cards(:shipping).update! last_active_at: Time.now - minimum_period + 1.second
++
++    assert_includes Card.due_to_be_postponed, cards(:logo)
++    assert_not_includes Card.due_to_be_postponed, cards(:shipping)
++  end
++
+   test "auto postpone all due using the default account entropy" do
+     entropies(:writebook_board).destroy
+ 

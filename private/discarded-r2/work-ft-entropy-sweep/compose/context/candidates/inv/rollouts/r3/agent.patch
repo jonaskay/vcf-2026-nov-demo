@@ -1,0 +1,63 @@
+diff --git a/app/models/card/entropic.rb b/app/models/card/entropic.rb
+index ebaad78..f29f5c3 100644
+--- a/app/models/card/entropic.rb
++++ b/app/models/card/entropic.rb
+@@ -2,12 +2,12 @@ module Card::Entropic
+   extend ActiveSupport::Concern
+ 
+   included do
+-    scope :due_to_be_postponed, -> do
++    scope :due_to_be_postponed, ->(now = Time.now) do
+       active
+         .joins(board: :account)
+         .left_outer_joins(board: :entropy)
+         .joins("LEFT OUTER JOIN entropies AS account_entropies ON account_entropies.account_id = accounts.id AND account_entropies.container_type = 'Account' AND account_entropies.container_id = accounts.id")
+-        .where("last_active_at <= #{connection.date_subtract('?', 'COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period)')}", Time.now)
++        .where("last_active_at <= #{connection.date_subtract('?', 'COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period)')}", now)
+     end
+ 
+     scope :postponing_soon, -> do
+@@ -25,8 +25,19 @@ module Card::Entropic
+ 
+   class_methods do
+     def auto_postpone_all_due
+-      due_to_be_postponed.find_each do |card|
+-        card.auto_postpone(user: card.account.system_user)
++      now = Time.now
++      earliest_possible_due_at = now - Entropy::AUTO_POSTPONE_PERIODS_IN_SECONDS.min
++
++      Account.find_each do |account|
++        system_user = nil
++
++        due_to_be_postponed(now)
++          .where(account_id: account.id, last_active_at: ..earliest_possible_due_at)
++          # Keep keyset batches aligned with the account/time index.
++          .find_each(cursor: [ :last_active_at, :id ]) do |card|
++            system_user ||= account.system_user
++            card.auto_postpone(user: system_user)
++          end
+       end
+     end
+   end
+diff --git a/test/models/card/entropic_test.rb b/test/models/card/entropic_test.rb
+index 848cfa7..61a265f 100644
+--- a/test/models/card/entropic_test.rb
++++ b/test/models/card/entropic_test.rb
+@@ -32,6 +32,17 @@ class Card::EntropicTest < ActiveSupport::TestCase
+     assert_equal original_period, account_entropy.reload.auto_postpone_period
+   end
+ 
++  test "auto postpone all due using the shortest entropy period" do
++    freeze_time
++
++    entropies(:writebook_board).update! auto_postpone_period: 3.days
++    cards(:logo).update! last_active_at: 3.days.ago - 1.second
++
++    Card.auto_postpone_all_due
++
++    assert cards(:logo).reload.postponed?
++  end
++
+   test "auto postpone all due using the default account entropy" do
+     entropies(:writebook_board).destroy
+ 

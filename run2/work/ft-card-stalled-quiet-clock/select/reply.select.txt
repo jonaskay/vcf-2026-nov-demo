@@ -1,0 +1,11 @@
+I'd deliver **c01**. It's the most complete version of the request, and it keeps the request's names exactly: `indexed_by=stalled`, a `stalled` scope, `stalled?` and a JSON `stalled` key.
+
+<why>
+Deciding criteria: delivery and operational fitness. Stalled status changes with time even when no record is saved, so cached card views and ETags must change when it flips. c01 does that everywhere it shows the badge: previews, the card page, events, notifications, pins, search, prompts and mailers. Its `stalled` scope and `stalled?` predicate agree, and both schema files carry the column. Old exports without `burst_at` still import. Comment bursts use a sliding window over human comments only, and the stalled list keeps the existing filter behaviour that hides closed and Not Now cards.
+Runner-up c05 is equally thorough, but it rebuilds ETags with a type-sniffing hook in `ApplicationController` and adds closed and Not Now cards to the stalled list, which the request never asked for.
+c04 works out bursts with an extra SQL query for every card, including when building cache keys. c07 changes `touch:` on many models and adds a backfill migration, which is out of scope. c09 has no cache handling and puts no badge on notifications or events. c02, c03, c06 and c08 show the badge in fewer places or skip import compatibility.
+</why>
+
+```choice
+c01
+```

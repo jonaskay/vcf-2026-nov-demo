@@ -1,0 +1,2 @@
+OK /Users/jk/dev/vcf-nov-2026-talk/demo/run2/work/ft-card-reactions/dom/context/harness
+single-component: OK (skills/card-feature-surfaces and its trigger line in system.md)

@@ -1,0 +1,29 @@
+<notes>
+**I changed one component: `system.md`.** I rewrote its workflow section and added a short block of workspace facts. No other file was touched and there are no skills, so there is no trigger line to add. The submit instruction is kept word for word.
+
+**What the runs did.** All three base runs finished, but they took very different amounts of time.
+- r1 finished in 42 minutes and made its first repository write at step 25, about 17 minutes in.
+- r2 took 76 minutes and first wrote at step 26, about 41 minutes in. That left only 14 minutes before the 90-minute limit.
+- r3 took 65 minutes and first wrote at step 17, about 39 minutes in.
+
+Most of the time in r2 and r3 went on single turns of long thinking, not on commands. In r3, the gap between steps 9 and 10 was 10 minutes, and steps 15→16 and 16→17 were about 7.5 minutes each. In r2, steps 10→11 took 9 minutes and steps 12→13 took 4.5 minutes. r1 shows the same model can get from exploring to writing quickly, so this is a divergence rather than a missing ability.
+
+**Workflow edits and the moment behind each:**
+- **Time checkpoints, and a `date -u` clock check.** These target the r2/r3 divergence above. The checkpoints are a first test or migration by about minute 20, every part working by about minute 55, and only finishing up after minute 75. The edit also says what "enough exploration" means: you know which files you will touch and which test covers each behaviour. It also says not to design the whole feature in one turn.
+- **Replaced "Create a script to reproduce the issue".** That step suits bug fixes, not feature work, and none of the three runs followed it; all three wrote tests instead. The new steps describe that test-per-behaviour loop.
+- **A diff-review step that names leftover debug output.** In r3, steps 43–63, the agent added `warn(...)` lines to `email_bundleable.rb`, `email_bundle.rb` and `email_bundle_job.rb`. It had to grep repeatedly (steps 62–64 and 70) to make sure they were gone.
+
+**Workspace facts, each taken from command output in a trajectory:**
+- **`rg` is not installed.** r3 step 4 printed "bash: line 1: rg: command not found", and r1 step 4 exited with 127.
+- **Test commands and suite speed.** `bin/rails test <file>` works for focused tests (r1 steps 31 and 59). The full suite ran 1521 tests in about 16 seconds across 2 processes (r2 step 52). In r1 the full run (step 78) fit in under a minute, judging from the next step's timestamp.
+- **What `db:migrate` changes.** In r2 step 40, after `db:migrate` at step 32:
+  - `git status` showed `db/cable_schema.rb` and `db/schema_sqlite.rb` modified, but not `db/schema.rb`.
+  - `db/schema.rb` was still at version 2026_07_09_120000, while `db/schema_sqlite.rb` had moved to 2026_07_10_120000.
+
+  r1 reverted `db/cable_schema.rb` with `git checkout` at step 52. Its first hand edit of `db/schema.rb` came out with broken indentation (the output at step 53) and was fixed at step 56. Every run paid four to seven steps to rediscover this.
+- **A flaky test that cost r2 about 10 minutes.** `Storage::TotaledTest` at `test/models/storage/totaled_test.rb:88` failed in r2 step 52 (the full suite) and again in step 55, where the file ran in a single process. The test compares two UUIDv7 ids. r2 then spent steps 56–71 looking into it and into `PARALLEL_WORKERS`. The full suite passed in r1 step 78 and r3 step 48, and r2 had not touched any storage code.
+
+**What I left out:**
+- **The import/export compatibility work r2 added** (steps 42–50: `Account::DataTransfer` changes and a new record set). Whether that belongs in scope is a judgement about the codebase, not about how the agent works.
+- **Where mailer views should live.** r1 put its templates in `app/views/notification_mailer/`, while r2 and r3 used `app/views/mailers/notification_mailer/`. The repository has both `app/views/mailers/*` and `app/views/user_mailer`, so the evidence doesn't settle which location is correct.
+</notes>

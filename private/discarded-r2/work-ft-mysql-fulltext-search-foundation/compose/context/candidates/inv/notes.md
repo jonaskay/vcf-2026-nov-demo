@@ -1,0 +1,35 @@
+**Component changed:** `tool_guidance.md` only. I replaced the whole file. It is roughly the same length as before. Nothing else in the harness was touched. No skill was added, so no trigger line was needed. The instruction to finish with `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` alone is still in `system.md` and `guardrails.md`.
+
+**Why this component.** The old file's only example of creating a file was `newfile.py` with `import numpy`. That steers the agent towards Python, and every base run then reached for Python. Many of the failed commands in the runs were broken edit commands, not mistakes in the code itself.
+
+**Trajectory moments behind each part:**
+
+1. **"There is no `python3`."** All three runs tried a `python3 -` heredoc edit and got `python3: command not found`:
+   - r1 step 28
+   - r2 step 14
+   - r3 step 27
+
+   In r3 the edit was lost and the test run in the same command failed again.
+
+2. **Ruby edit recipe and the three ways it breaks silently.**
+   - **Single-quoted `'\n'` anchors.** r3 step 30 put the route insert inside a single-quoted `'...\n'` anchor, so `sub!` matched nothing. Step 33 (`grep -n "root\|search" config/routes.rb`) shows only the `root` line, so the route was never added. The agent re-did it at steps 32 and 35.
+   - **Clashing heredoc delimiters.** r3 step 30 used an outer `<<'RUBY'` and an inner `<<~'RUBY'`. The result was `unterminated heredoc` plus a bash syntax error, and the model and controller edits in that command were lost.
+   - **Stacked heredocs.** r3 step 28 stacked `<<~OLD, <<~NEW` heredocs, which Ruby parsed wrongly (`undefined method 'boards' for main`).
+   - **`;` masking a failed edit.** In r1 step 60 the script printed `search_results method not found`, but the step exited 0 because a later command in the step succeeded. The agent had to redo the edit at step 61.
+   - This pattern of failed or retried edits is spread across r3 steps 27–30, 32, 35, 38–40, 44 and 47. That is a large part of r3's 62 minutes, the longest run.
+   - The fix is one recipe: `sub! or abort`, `&& git diff`, and a rule to check the file after editing.
+
+3. **"Testing in this workspace" facts.**
+   - **Single-file command and timing:** r1 step 60 ran `bundle exec rails test test/controllers/search_controller_test.rb` in 0.6 s.
+   - **Full suite:** r1 step 64 ran `bundle exec rails test` — 1504 runs, about 15 s, 2 skips. This is a divergence between runs: r2 never ran the full suite (evidence table, "full suite: no") even though it costs about 15 seconds.
+   - **`<file>:<line>` form:** shown in the rerun hints in r3 step 21's test output.
+   - **Tests run on SQLite:**
+     - r3 step 29's error was `SQLite3::ConstraintException`.
+     - r1 step 62 (`cat config/database.sqlite.yml`) shows test `storage/test.sqlite3` with `schema_dump: schema_sqlite.rb`.
+     - r1 step 3's `find` listing shows both `db/schema.rb` and `db/schema_sqlite.rb`.
+   - **`bin/rubocop <files>`:** used successfully in r3 step 54 and r1 step 67.
+   - **`git status` / `git diff` review before submitting:** r1 step 70 and r3 step 88 did this. It is kept as the general way to finish.
+
+**What I deliberately left out:**
+- No Rails or Fizzy behaviour rules, such as how to build search queries or set up test records. Those belong to the parallel candidate.
+- No rewrite of the generic workflow in `system.md`. All three runs finished in time, and each change can only touch one component.

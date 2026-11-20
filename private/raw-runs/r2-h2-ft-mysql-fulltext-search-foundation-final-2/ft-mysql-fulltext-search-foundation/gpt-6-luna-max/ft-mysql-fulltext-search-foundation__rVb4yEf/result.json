@@ -1,0 +1,63 @@
+{
+  "trial": "ft-mysql-fulltext-search-foundation__rVb4yEf",
+  "task": "ft-mysql-fulltext-search-foundation",
+  "agent": "harnessed-miniswen",
+  "model": "openai/gpt-6-luna#max",
+  "index": 1,
+  "profile_digest": "73116e4a943eabe1",
+  "task_digest": "733f3240ec405034",
+  "revision": {
+    "commit": "f587d5a44897f3467af2a48c0503aef4eb6acf55",
+    "dirty": true
+  },
+  "lemans_version": "1.6.0",
+  "tags": [
+    "rails",
+    "active-record",
+    "migrations",
+    "raw-sql",
+    "callbacks"
+  ],
+  "metadata": {
+    "category": "full-features"
+  },
+  "phases": [
+    {
+      "name": "environment_setup",
+      "started_at": "2026-11-17T22:42:08.029142Z",
+      "finished_at": "2026-11-17T22:42:13.586750Z"
+    },
+    {
+      "name": "agent",
+      "started_at": "2026-11-17T22:42:13.586777Z",
+      "finished_at": "2026-11-17T23:23:11.430288Z"
+    },
+    {
+      "name": "verifier",
+      "started_at": "2026-11-17T23:23:11.587079Z",
+      "finished_at": "2026-11-17T23:23:30.109642Z"
+    }
+  ],
+  "reward": 1.0,
+  "credit": 1.0,
+  "outcome": {
+    "name": "completed",
+    "scored": true
+  },
+  "usage": {
+    "input_tokens": 6053191,
+    "output_tokens": 241188,
+    "cached_tokens": 5903612,
+    "steps": 73,
+    "cost_usd": 0.19832202000000004,
+    "cost_source": {
+      "name": "model_registry",
+      "model": "openai/gpt-6-luna#max",
+      "priced_as": "openai/gpt-6-luna",
+      "registry": "ruby_llm 2.1.1 (registry 2026-11-17T22:42:12Z)"
+    }
+  },
+  "duration": 2482.1,
+  "started_at": "2026-11-17T22:42:08Z",
+  "finished_at": "2026-11-17T23:23:30Z"
+}

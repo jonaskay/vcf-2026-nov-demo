@@ -1,0 +1,12 @@
+c01	composed	r2	/Users/jk/dev/vcf-nov-2026-talk/demo/run2/work/ft-mysql-fulltext-search-foundation/final/r2	r2-h2-ft-mysql-fulltext-search-foundation-final-2
+c02	composed	r3	/Users/jk/dev/vcf-nov-2026-talk/demo/run2/work/ft-mysql-fulltext-search-foundation/final/r3	r2-h2-ft-mysql-fulltext-search-foundation-final-3
+c03	base	r1	/Users/jk/dev/vcf-nov-2026-talk/demo/run2/work/ft-mysql-fulltext-search-foundation/refs/r1	r2-h0-ft-mysql-fulltext-search-foundation-1
+c04	base	r3	/Users/jk/dev/vcf-nov-2026-talk/demo/run2/work/ft-mysql-fulltext-search-foundation/refs/r3	r2-h0-ft-mysql-fulltext-search-foundation-3
+c05	inv	r1	/Users/jk/dev/vcf-nov-2026-talk/demo/run2/work/ft-mysql-fulltext-search-foundation/probe_inv/r1	r2-h2-ft-mysql-fulltext-search-foundation-inv-1
+c06	inv	r3	/Users/jk/dev/vcf-nov-2026-talk/demo/run2/work/ft-mysql-fulltext-search-foundation/probe_inv/r3	r2-h2-ft-mysql-fulltext-search-foundation-inv-3
+c07	composed	r1	/Users/jk/dev/vcf-nov-2026-talk/demo/run2/work/ft-mysql-fulltext-search-foundation/final/r1	r2-h2-ft-mysql-fulltext-search-foundation-final-1
+c08	base	r2	/Users/jk/dev/vcf-nov-2026-talk/demo/run2/work/ft-mysql-fulltext-search-foundation/refs/r2	r2-h0-ft-mysql-fulltext-search-foundation-2
+c09	dom	r1	/Users/jk/dev/vcf-nov-2026-talk/demo/run2/work/ft-mysql-fulltext-search-foundation/probe_dom/r1	r2-h2-ft-mysql-fulltext-search-foundation-dom-1
+c10	dom	r2	/Users/jk/dev/vcf-nov-2026-talk/demo/run2/work/ft-mysql-fulltext-search-foundation/probe_dom/r2	r2-h2-ft-mysql-fulltext-search-foundation-dom-2
+c11	dom	r3	/Users/jk/dev/vcf-nov-2026-talk/demo/run2/work/ft-mysql-fulltext-search-foundation/probe_dom/r3	r2-h2-ft-mysql-fulltext-search-foundation-dom-3
+c12	inv	r2	/Users/jk/dev/vcf-nov-2026-talk/demo/run2/work/ft-mysql-fulltext-search-foundation/probe_inv/r2	r2-h2-ft-mysql-fulltext-search-foundation-inv-2

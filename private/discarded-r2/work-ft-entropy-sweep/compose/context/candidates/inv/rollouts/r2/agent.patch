@@ -1,0 +1,110 @@
+diff --git a/app/jobs/card/auto_postpone_all_due_job.rb b/app/jobs/card/auto_postpone_all_due_job.rb
+new file mode 100644
+index 0000000..d16e175
+--- /dev/null
++++ b/app/jobs/card/auto_postpone_all_due_job.rb
+@@ -0,0 +1,8 @@
++class Card::AutoPostponeAllDueJob < ApplicationJob
++  queue_as :backend
++  limits_concurrency to: 1, key: -> { true }, duration: 1.day, on_conflict: :discard
++
++  def perform
++    Card.auto_postpone_all_due
++  end
++end
+diff --git a/app/models/card/entropic.rb b/app/models/card/entropic.rb
+index ebaad78..fc2a2df 100644
+--- a/app/models/card/entropic.rb
++++ b/app/models/card/entropic.rb
+@@ -3,11 +3,16 @@ module Card::Entropic
+ 
+   included do
+     scope :due_to_be_postponed, -> do
++      now = Time.now
++      minimum_period = Entropy::AUTO_POSTPONE_PERIODS_IN_SECONDS.min.seconds
++
++      # All valid entropy periods are at least this long, so newer cards cannot be due.
+       active
+         .joins(board: :account)
+         .left_outer_joins(board: :entropy)
+         .joins("LEFT OUTER JOIN entropies AS account_entropies ON account_entropies.account_id = accounts.id AND account_entropies.container_type = 'Account' AND account_entropies.container_id = accounts.id")
+-        .where("last_active_at <= #{connection.date_subtract('?', 'COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period)')}", Time.now)
++        .where("cards.last_active_at <= ?", now - minimum_period)
++        .where("cards.last_active_at <= #{connection.date_subtract('?', 'COALESCE(entropies.auto_postpone_period, account_entropies.auto_postpone_period)')}", now)
+     end
+ 
+     scope :postponing_soon, -> do
+@@ -25,8 +30,13 @@ module Card::Entropic
+ 
+   class_methods do
+     def auto_postpone_all_due
+-      due_to_be_postponed.find_each do |card|
+-        card.auto_postpone(user: card.account.system_user)
++      Account.find_each do |account|
++        system_user = nil
++
++        account.cards.due_to_be_postponed.find_each(cursor: [ :account_id, :number ], order: [ :asc, :asc ]) do |card|
++          system_user ||= account.system_user
++          card.auto_postpone(user: system_user)
++        end
+       end
+     end
+   end
+diff --git a/config/recurring.yml b/config/recurring.yml
+index 894c57b..aa0dd52 100644
+--- a/config/recurring.yml
++++ b/config/recurring.yml
+@@ -8,7 +8,7 @@ production: &production
+ 
+   # Application cleanup
+   auto_postpone_all_due:
+-    command: "Card.auto_postpone_all_due"
++    class: Card::AutoPostponeAllDueJob
+     schedule: every hour at minute 50
+   delete_unused_tags:
+     class: DeleteUnusedTagsJob
+diff --git a/test/jobs/card/auto_postpone_all_due_job_test.rb b/test/jobs/card/auto_postpone_all_due_job_test.rb
+new file mode 100644
+index 0000000..efec2a1
+--- /dev/null
++++ b/test/jobs/card/auto_postpone_all_due_job_test.rb
+@@ -0,0 +1,18 @@
++require "test_helper"
++
++class Card::AutoPostponeAllDueJobTest < ActiveJob::TestCase
++  test "runs the due-card sweep" do
++    Card.expects(:auto_postpone_all_due)
++
++    Card::AutoPostponeAllDueJob.perform_now
++  end
++
++  test "discards overlapping sweeps" do
++    job = Card::AutoPostponeAllDueJob.new
++
++    assert job.concurrency_limited?
++    assert_equal 1, job.concurrency_limit
++    assert_equal :discard, job.concurrency_on_conflict
++    assert_equal 1.day, job.concurrency_duration
++  end
++end
+diff --git a/test/models/card/entropic_test.rb b/test/models/card/entropic_test.rb
+index 848cfa7..bb7fe52 100644
+--- a/test/models/card/entropic_test.rb
++++ b/test/models/card/entropic_test.rb
+@@ -32,6 +32,16 @@ class Card::EntropicTest < ActiveSupport::TestCase
+     assert_equal original_period, account_entropy.reload.auto_postpone_period
+   end
+ 
++  test "auto postpone all due at the minimum entropy period" do
++    freeze_time
++    entropies(:writebook_board).update!(auto_postpone_period: 3.days)
++    cards(:logo).update!(last_active_at: 3.days.ago)
++
++    Card.auto_postpone_all_due
++
++    assert cards(:logo).reload.postponed?
++  end
++
+   test "auto postpone all due using the default account entropy" do
+     entropies(:writebook_board).destroy
+ 

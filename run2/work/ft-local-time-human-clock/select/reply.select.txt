@@ -1,0 +1,14 @@
+I'd ship **c09**. It's the only candidate that clears every check that ended up deciding this.
+
+<why>
+The deciding criteria were operational fitness and finish. c09 covers every place a time is shown, including both saas views, and it keeps `beginningOfDay` exported. Its `local-time` controller watches child-node changes, so the formatted text survives the app's morph page refreshes. It removes the comment link's `text-transform: capitalize`, so a comment reads "5 days ago", not "5 Days Ago". It adds no unrequested features.
+- c02 was closest. It lost on finish: one of its system tests is mis-indented, and it renames the helpers to `browser_*`.
+- c01 leaves the saas views on server-rendered times and renames `bridge_share_card_description` (conformance).
+- c04, c06 and c10 only re-format when an attribute changes, so a morph refresh can put the raw timestamp back on screen.
+- c03 and c11 drop the `beginningOfDay` export; c12 deletes `meta_helpers.js`.
+- c08 keeps the capitalize style; c05 adds a timezone-sync rewrite nobody asked for; c07 still varies the ETag for signed-in users.
+</why>
+
+```choice
+c09
+```

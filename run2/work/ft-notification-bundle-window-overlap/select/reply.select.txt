@@ -1,0 +1,16 @@
+I recommend submitting **c01**. Two candidates deliver nothing: c03 and c09 are empty patches.
+
+- **c01 does the full job.** It adds `bundle_email_frequency` with exactly `never`, `every_few_hours`, `daily` and `weekly`, and maps them to 4 hours, 1 day and 1 week. A person's first notification opens their window. Late notifications join the window that is still open. A unique database index on the open window means a person can never have two at once. It reschedules delivery if the job runs early and stops a window when someone switches to "never". Its settings form handles an invalid value without crashing, and the patch includes tests.
+- **c04 was the closest runner-up.** It follows the same design and is equally correct, but it is less clean. It uses a plain validation instead of an enum, and adds extra SMTP-error handling that wasn't asked for.
+- **c02 is also correct**, but it adds a new data-transfer record set and changes the importer, and its `db/schema.rb` edit leaves stray blank lines.
+- **c08 would break in use.** On `Notification`, the link to bundle items uses the wrong foreign key (`notification_email_bundle_id` instead of `notification_id`). Its mail templates sit outside the `mailers/` folder that the other candidates use. The settings save returns an empty response to an ordinary HTML form.
+- **c07 adds far more than was asked for.** That includes a second migration that copies notification content into the bundle, changes to how users are deactivated, and an extra delivery job. It also labels the option "Every 4 hours" rather than "Every four hours".
+- **c06 has no database guard against overlapping windows**, relying only on a row lock. It also does nothing when someone switches to "never".
+
+<why>
+Decided on DELIVERY plus INTERNAL CONSISTENCY. c01 has the exact frequency names, opens the window at the first notification, adds late arrivals to the open window, and a unique open-window index prevents overlap. It reschedules early runs, cancels on "never", and has tests that cover all of this. Runner-up c04 is equally correct but adds unrequested SMTP-error discarding. c02 adds data-transfer extras and leaves messy schema edits. c08 has a wrong foreign key. c07 overreaches and changes the label to "Every 4 hours". c06 has no database guard against overlap. c03 and c09 are empty.
+</why>
+
+```choice
+c01
+```

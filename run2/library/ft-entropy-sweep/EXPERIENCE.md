@@ -1,0 +1,39 @@
+# ft-entropy-sweep
+
+- adopted: the composed harness (Harness² run 2: 3 base rollouts, 3 per candidate, composed: composed)
+- components: skills 1, always-on text 5497 characters
+
+## Why this harness (composer decisions)
+
+kept -> INV system.md rewrite (time checkpoints, 10k-row/`timeout 120` experiment bound, stop rule, diff review for scope) -> base r2 timed out at 91 min (1/3 base, but the only unusable-risk outcome): its first write came at step 51 (~44 min), two runner scripts hit exit 124 at steps 79/81, and after a green full suite at step 83 it widened into system_commenter.rb (steps 85–95) and kept benchmarking until the limit. INV runs 3/3 completed at 9/26/27 min (base median 41). The agent followed the rule: inv r2 ran `date -u` at steps 3/39/56/69, used `timeout 120 bin/rails runner` at step 24, and submitted right after its full suite and diff review (steps 69–71). No INV rollout had an empty patch or a timeout.
+kept -> INV workspace facts block (rg missing, test commands, multi-db migrate/schema.rb/cable_schema/rollback:primary) -> `rg` exit 127 at step 4 in all 3 base runs; base r2 steps 66/68 hit the refused `db:rollback` and a failed rollback of an edited migration; schema.rb was hand-edited in base r1/r2. I revised the fixture-count line to "0–8 cards seen" because the INV notes (8 cards, r2 step 80) and the DOM notes (cards=0, r1 step 12) contradict each other.
+kept -> DOM skill query-performance-change plus its trigger line in system.md -> read 3/3 at the first or second step (dom r1 step 3). All 3 DOM runs completed (18/25/28 min). Each kept due_to_be_postponed as the shared selection and added an index without dropping one (dom r3 patch). Base runs split on this: base r2 removed index_cards_on_board_id and edited SystemCommenter, and base r3 left the scope slow while the job used a private per-account path. No DOM rollout had an empty patch or a timeout.
+revised -> DOM skill §3/§4 de-duplication -> I removed the migrate/cable_schema bullet, which is now always-on in system.md, and the "test DB empty" claim, which conflicts with the INV fact. The rest of the skill is unchanged. dom r3 used the brakeman note to update config/brakeman.ignore; that is a CI-consistent follow-on and does not change the requested behaviour, so I kept the note.
+merge -> INV procedure in system.md plus DOM skill on demand -> they touch different components and work through different mechanisms (pacing vs. domain contract), and neither arm had a failed run. Always-on cost grows only by the INV text, which every INV run shows being used. All other files are inherited from base unchanged.
+
+## What each edit did
+
+component: skills/query-performance-change/SKILL.md (new on-demand skill, with a one-line trigger in system.md telling the agent to `cat` it)
+candidates: dom, adopted
+change: Added a domain skill for query-performance work and a system.md line that points to it for slow-query, overrunning-job and index/migration requests. The skill says to pin the public contract first, and states a rule: the scope and the sweep that processes "the same" records must agree. It also says to check the EXPLAIN plan of the per-batch query, to add an index rather than remove one (`[board_id]` named), lists the facts about the two schema files, lists the entropy-domain files and fixtures, and says not to fix neighbouring behaviour such as comment authorship. In the adopted version the migrate/cable_schema bullet and the "test DB empty" claim were removed (they moved to system.md workspace facts); the rest is the same.
+observed: Every run that had the skill read it within its first few steps (dom r1 step 3, composed r1 steps 4-5), and all 6 kept `due_to_be_postponed` as the one selection the sweep uses. dom r1 steps 41-46 added a constant cutoff to the scope and a keyset loop over it, and composed r1 step 19 rewrote the scope itself. The other arms split. Base r1 kept the scope, but base r3 step 33 moved the sweep onto a private per-account `postpone_due_cards_for` path, left the scope slow and tested it with `send`. Base r2 steps 51-53 bypassed the scope with a per-board loop, its migration dropped `index_cards_on_board_id`, and at step 85 it changed `SystemCommenter` after a green suite. inv r2 step 38 also bypassed the scope with `Board.preload...find_each`. All 3 dom runs added an index without removing one, and none edited unrelated classes. dom r3 and composed r1 step 36 also updated `config/brakeman.ignore` after reading the skill's brakeman note.
+verdict: helped
+
+component: system.md (Recommended Workflow rewritten: 90-min clock with `date -u`, write by about minute 25 and finish by about minute 55, experiments in /tmp capped at 10k rows under `timeout 120`, full suite plus rubocop, diff review, stop rule after a green suite)
+candidates: inv, adopted
+change: Replaced the generic 6-step workflow with time checkpoints, limits on the size of experiments, a full-suite and diff-review step, and a rule to submit once the suite and diff review are clean instead of starting new work.
+observed: The agent did what the text says. inv r2 ran `date -u` at steps 3/39/56/69 and used `timeout 120 bin/rails runner` at step 24, then submitted at step 71, right after the full suite (step 69) and diff review (step 70). Base r2, by contrast, kept going after its green suite at step 83 and edited system_commenter.rb at step 85; two runner scripts timed out at 300 s (steps 79 and 81), and the run hit the 90-minute limit. That runaway happened in only 1 of 3 base runs. The speed-up (inv took 9/26/27 min against a base median of 41) also shows in dom (18/25/28 min), which did not have this text, so the pacing gain cannot be credited to this component.
+verdict: confounded
+
+component: system.md (Workspace facts block: rg missing, test commands, fixture-only test DB, multi-db migrate/schema.rb/cable_schema/`db:rollback:primary`)
+candidates: inv, adopted
+change: Added facts about this workspace: use `grep -RIn` because `rg` is absent; hand-edit `db/schema.rb` and its version line; revert `db/cable_schema.rb`; plain `db:rollback` is refused. The adopted version changed the fixture count to "0–8 cards seen".
+observed: All 3 base runs called `rg` and got exit 127 (base r1 step 4, base r3 step 4, base r2 step 4). No inv run used `rg`; inv r1 step 4 used grep. Base r2 step 66 ran the refused `db:rollback` and needed steps 67-68 to recover. inv r1 step 18 reverted cable_schema and hand-edited schema.rb right after migrating at step 16, with no failed attempt. The saving is a few steps per run and did not change what the patches contained.
+verdict: helped
+
+## Transferable lesson
+
+- **cue**: A performance fix where a public, named selection (scope or query method) is also what a batch job or sweep iterates over, so the agent is tempted to rewrite the job's loop and leave the named selection in place
+- **lesson**: Give the harness an on-demand skill under skills/, triggered from system.md for slow-query and overrunning-job requests, that says: the job must stay built on the public selection, or the selection must change in exactly the same way; check the EXPLAIN plan of the per-batch query; add indexes, never remove one. Check it by grepping the final diff to confirm the job still calls the named scope and no remove_index was added.
+- **evidence**: Row skills/query-performance-change/SKILL.md (verdict helped). All 6 runs that read it kept the sweep on `due_to_be_postponed` and only added indexes (dom r1 steps 41-46, composed r1 step 19). Runs without it bypassed the scope in base r2 steps 51-53, base r3 step 33 and inv r2 step 38, and base r2 also dropped `index_cards_on_board_id`.
+- **confidence**: medium. The contrast is 6/6 against 3/6 and lines up with the rule's wording, but every run was on one task and 3 runs per arm is a small sample.

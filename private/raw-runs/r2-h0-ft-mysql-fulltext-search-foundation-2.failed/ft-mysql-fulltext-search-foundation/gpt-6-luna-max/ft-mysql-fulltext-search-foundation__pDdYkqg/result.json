@@ -1,0 +1,44 @@
+{
+  "trial": "ft-mysql-fulltext-search-foundation__pDdYkqg",
+  "task": "ft-mysql-fulltext-search-foundation",
+  "agent": "harnessed-miniswen",
+  "model": "openai/gpt-6-luna#max",
+  "index": 1,
+  "profile_digest": "73116e4a943eabe1",
+  "task_digest": "733f3240ec405034",
+  "revision": {
+    "commit": "f587d5a44897f3467af2a48c0503aef4eb6acf55",
+    "dirty": true
+  },
+  "lemans_version": "1.6.0",
+  "tags": [
+    "rails",
+    "active-record",
+    "migrations",
+    "raw-sql",
+    "callbacks"
+  ],
+  "metadata": {
+    "category": "full-features"
+  },
+  "phases": [
+    {
+      "name": "environment_setup",
+      "started_at": "2026-11-16T07:00:06.523760Z",
+      "finished_at": "2026-11-16T07:00:30.004536Z"
+    },
+    {
+      "name": "agent",
+      "started_at": "2026-11-16T07:00:30.004574Z",
+      "finished_at": "2026-11-16T07:22:35.115603Z"
+    }
+  ],
+  "outcome": {
+    "name": "agent_error",
+    "scored": false,
+    "detail": "miniswen: the model call failed: Rate limit reached for gpt-6-luna in organization org-JKszc5d4y6LL4ypDAcr65sFp on tokens per min (TPM): Limit 2000000, Used 1924657, Requested 85775. Please try again in 313ms. Visit https://platform.openai.com/account/rate-limits to learn more.: {\n  \"error\": {\n    \"message\": \"Rate limit reached for gpt-6-luna in organization org-JKszc5d4y6LL4ypDAcr65sFp on tokens per min (TPM): Limit 2000000, Used 1924657, Requested 85775. Please try again in 313ms. Visit https://platform.openai.com/account/rate-limits to learn more.\",\n    \"type\": \"tokens\",\n    \"param\": null,\n    \"code\": \"rate_limit_exceeded\"\n  }\n}"
+  },
+  "duration": 1348.6,
+  "started_at": "2026-11-16T07:00:06Z",
+  "finished_at": "2026-11-16T07:22:35Z"
+}

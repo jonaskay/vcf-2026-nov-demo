@@ -1,0 +1,74 @@
+diff -ruN -x .keep base_harness/skills/card-feature-surfaces/SKILL.md candidates/dom/harness/skills/card-feature-surfaces/SKILL.md
+--- base_harness/skills/card-feature-surfaces/SKILL.md	1970-01-01 02:00:00
++++ candidates/dom/harness/skills/card-feature-surfaces/SKILL.md	2026-11-17 02:20:45
+@@ -0,0 +1,59 @@
++# Card feature surfaces (Fizzy)
++
++Use this when a change gives cards a new child record or behavior, or extends a comment-level feature (reactions, etc.) to cards.
++Lines marked "in this workspace" were seen in this repository. Re-check them with `grep -n` before you rely on them. They hold for this checkout, not for every checkout.
++The request decides names, labels and behavior. Nothing here renames anything the request specifies.
++
++## 1. Find the sibling first. It is the specification.
++Analytic move: EXTEND. Input: the existing comment-level implementation. Result: a card-level twin that behaves the same in every respect the request does not change.
++In this workspace the comment-reaction stack consists of:
++- model `app/models/reaction.rb` (`belongs_to :account, default: -> { comment.account }`, `belongs_to :comment, touch: true`, `after_create :register_card_activity`) and `app/models/comment.rb:7` (`has_many :reactions, -> { order(:created_at) }, dependent: :delete_all`), plus `comment.rb:14` (`scope :preloaded ... includes(reactions: :reacter)`)
++- controller `app/controllers/cards/comments/reactions_controller.rb` (`wrap_parameters :reaction`, `include CardScoped`, index/new/create/destroy, turbo_stream plus json, `head :forbidden` unless the reacter is the current user)
++- route `config/routes.rb` around line 103: `resources :comments do resources :reactions, module: :comments end`, inside `resources :cards do scope module: :cards`
++- views `app/views/cards/comments/reactions/*` (`_reactions`, `_reaction`, `_menu`, `new`, `index`, `create.turbo_stream`, `destroy.turbo_stream`, `*.json.jbuilder`). Turbo frame ids are `dom_id(comment, :reacting)` and `dom_id(comment, :new_reaction)`.
++- JSON link `app/views/cards/comments/_comment.json.jbuilder:19` (`json.reactions_url ...`)
++- tests `test/controllers/cards/comments/reactions_controller_test.rb`, `test/models/reaction_test.rb`, `test/controllers/api/flat_json_params_test.rb:159`
++Before you finish, make sure the card-level change has a counterpart for every bullet: model, controller, route, views, JSON link and tests. Check the JSON output too: the `url` of each reaction JSON must point to the card route for card records and to the comment route for comment records.
++
++Comment behavior must stay as it is. If you generalize shared partials, keep the comment frame ids, the `cards/comments/reactions/...` render paths the tests use, and the existing JSON keys.
++
++## 2. Data model decision (DECISION RULE: state your choice in your reasoning)
++Trigger: an existing child table has a required `comment_id` and must also belong to cards.
++Evidence in this workspace:
++- polymorphic parents are idiomatic. Examples: `app/models/concerns/eventable.rb` (`has_many :events, as: :eventable`), `concerns/mentions.rb` and `concerns/notifiable.rb` (`as: :source`), `event.rb:7` (`belongs_to :eventable, polymorphic: true`)
++- a dual optional-FK precedent exists too: `app/models/search/result.rb:7-8` (`belongs_to :card ... optional: true`, `belongs_to :comment ... optional: true`)
++- `app/models/account/data_transfer/manifest.rb:51` exports `::Reaction`. `record_set.rb` checks every `belongs_to` foreign key generically and validates polymorphic `*_type` values against an allowlist, so either design is handled.
++Either design is acceptable. The two designs carry different obligations:
++- polymorphic (rename `comment_id` to `<x>_id` and add `<x>_type`): backfill `'Comment'` for existing rows in the migration, update every `reaction.comment` / `comment_id` caller (`grep -rn "reaction\.comment\|comment_id" app test`), and add `as:` on `Comment.has_many :reactions`. Note that export archives written before the change carry `comment_id`.
++- additive (nullable `card_id` and nullable `comment_id`): add a validation that exactly one parent is set, keep `belongs_to :comment` working, and use `default: -> { comment&.account || card&.account }`.
++In both cases, the activity hook must still call `card.touch_last_active_at` for card records. In this workspace `app/models/card.rb:50` defines a `card` method; read it before you write `is_a?` branches.
++
++## 3. Migration and schema (ARTIFACT CONTRACT)
++In this workspace:
++- the latest migration before this work is `db/migrate/20260709120000_...`. Both schema files start with `define(version: 2026_07_09_120000)`.
++- the app keeps TWO schema dumps: `db/schema.rb` (MySQL, with `charset:`/`collation:`) and `db/schema_sqlite.rb`. `bin/rails db:migrate` runs on SQLite and regenerates only `schema_sqlite.rb`. All three base runs edited `db/schema.rb` by hand: the column lines, the index lines and the version line. Both files must end up describing the same table.
++- `db:migrate` also rewrites `db/cable_schema.rb`. All three base runs had to `git checkout -- db/cable_schema.rb`. That diff is noise and must not ship.
++- the project does not use foreign-key constraints (`db/migrate/20251120194700_remove_all_foreign_key_constraints.rb`). r3's `add_reference ..., foreign_key: true` had to be rolled back. Use `add_column ... :uuid` plus `add_index`.
++- ids are `:uuid` columns.
++
++## 4. Where a card behavior shows up (RENDER, checklist)
++Card detail, in this workspace: `app/views/cards/show.html.erb` renders `cards/container` and then `cards/messages`. `_messages.html.erb` wraps its content in `if card.published?`. `app/controllers/concerns/card_scoped.rb:18` re-renders `cards/container` via morph after card actions. A control placed in `_container` is re-rendered by those actions. Gate it on `card.published?` the same way the messages are gated.
++- `--reaction-size` (the size of the reaction buttons and avatars) is defined only in `app/assets/stylesheets/comments.css` (lines 7, 20). Reactions rendered outside a comment need that variable defined in their new context (r1 and r3 added it in `card-perma.css`).
++
++Card previews, in this workspace:
++- the indicator to mirror is `app/views/cards/display/preview/_comments.html.erb` (`card.comments.by_user`, `.card__comments` div, `icon_tag "comment"`, `<strong>count</strong>`, rendered only when there are any comments). It is computed live. There is no counter column, so do not add a counter-cache migration (r2 added one and then rolled it back, which wasted ~5 min).
++- previews render in TWO templates: `cards/display/_preview.html.erb` (boards/columns, `cards/index`, the pins tray via `my/pins/_pin.html.erb:2`, `cards/previews/index.turbo_stream.erb`) and `cards/display/_public_preview.html.erb` (published boards, `app/controllers/public/boards*`). Put the indicator in both.
++- every CSS rule that names `.card__comments` needs the new class too: `card-columns.css` (~541 sizing, ~593 hidden-until-hover, ~604 revealed) and `trays.css` (~441, hidden in the pins tray). Only r3 updated `trays.css`. Run `grep -rn "card__comments" app/assets/stylesheets` and handle each hit.
++- caching: `cards/display/_previews.html.erb:1` and `cards/previews/index.turbo_stream.erb:4` render with `cached: true`, keyed on the card. `cards/_card.json.jbuilder` uses `json.cache! card`. `My::PinsController` uses `fresh_when etag: [..., cards]`. A new child that changes what a preview shows must `touch: true` the card. Otherwise counts go stale. Tip: `app/models/card.rb:18` has `after_touch -> { board.touch }`.
++- preloading: `Card.preloaded` (`app/models/card.rb` ~line 25) feeds the main boards. The `Public::` board and column controllers do not use `preloaded`. `.size` on an association that is not preloaded is a query, which is the same as `.count`.
++
++API, in this workspace: `cards/_card.json.jbuilder` ends with `json.comments_url card_comments_url(card)`. A card-level resource gets the matching `*_url` key, and `test/controllers/cards_controller_test.rb` ("show as JSON", ~line 198) asserts these URLs. `docs/api/` exists. Check it with `grep -rln reaction docs/api` and document the card endpoints next to any comment ones you find.
++
++## 5. Authorization and gating (DECISION RULE)
++`Cards::CommentsController` has `before_action :ensure_card_is_commentable, only: :create` (`head :forbidden unless @card.commentable?`). A comment-level child is reachable only through a comment that passed this gate, but a card-level child is not. Reproduce the gate for card-level creation, so drafts behave as they do for comments. Then keep the sibling's ownership rule (`head :forbidden if Current.user != @reaction.reacter`) and its scoped lookup (`@card.reactions.find`, which returns 404 for another card's record).
++
++## 6. Tests (TEST)
++- copy the structure of the sibling test file. Cover: index, new (`form[action=?]`), create via turbo_stream (`assert_turbo_stream action: :replace, target: dom_id(card, :reacting)`), destroy, non-owner forbidden, JSON index/create/destroy, and flat JSON params.
++- integration tests have no `Current.user`. Pass `reacter: users(:david)` explicitly, or the create fails with "Reacter must exist" (r3 step 36). Model tests set `Current.session = sessions(:david)` in `setup`.
++- add a detail-view assertion (the trigger link inside `turbo-frame#<dom_id(card, :reacting)>`) and a preview assertion. In the preview test, check that the indicator is absent at 0 and shows the number when it is greater than 0, in both the board column and the public column (`get public_board_column_path(board.publication.key, column)`).
++- the full suite (`bin/rails test`, about 1,540 tests in about 20 s) passed in all base runs. Run it after the schema change.
+diff -ruN -x .keep base_harness/system.md candidates/dom/harness/system.md
+--- base_harness/system.md	2026-11-17 02:20:45
++++ candidates/dom/harness/system.md	2026-11-17 02:20:45
+@@ -1,5 +1,7 @@
+ You can execute bash commands and edit files to implement the necessary changes.
+ 
++When the change attaches something new to cards or extends an existing comment-level feature to cards (a new association or table column, a resource nested under `cards`, an indicator on card previews, a key in card JSON), run `cat /opt/harness/skills/card-feature-surfaces/SKILL.md` and follow it.
++
+ ## Recommended Workflow
+ 
+ This workflow should be done step-by-step so that you can iterate on your changes and any possible problems.
